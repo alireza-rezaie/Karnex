@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>گزارش مدل‌ها و تغییرات Karnex</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    body { font-family: Tahoma, Arial, sans-serif; color: #172033; font-size: 11pt; line-height: 1.85; }
+    h1 { color: #0f4c81; font-size: 23pt; border-bottom: 3px solid #3b82f6; padding-bottom: 10px; }
+    h2 { color: #0f4c81; font-size: 16pt; margin-top: 26px; border-right: 4px solid #3b82f6; padding-right: 9px; }
+    h3 { color: #1d4f82; font-size: 13pt; margin-top: 20px; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 9.5pt; }
+    th { background: #eaf3ff; color: #0f4c81; } td, th { border: 1px solid #cbd5e1; padding: 7px; vertical-align: top; }
+    code, pre { direction: ltr; text-align: left; font-family: Consolas, monospace; font-size: 8.5pt; background: #f1f5f9; }
+    code { padding: 2px 4px; } pre { white-space: pre-wrap; padding: 10px; border-radius: 5px; }
+    .note { background: #fff8db; border-right: 4px solid #eab308; padding: 10px; }
+    .ok { background: #ecfdf5; border-right: 4px solid #10b981; padding: 10px; }
+    .page-break { page-break-before: always; }
+    ul { padding-right: 22px; }
+  </style>
+</head>
+<body>
+  <h1>گزارش کامل مدل‌ها و تغییرات مدیریت پروژه</h1>
+  <p>این گزارش، تغییرات انجام‌شده برای افزودن مدیریت پروژه، اسپرینت و وظایف به سامانه Karnex را مستند می‌کند. در این سند مشخص است هر مدل چه داده‌ای ذخیره می‌کند، با چه مدل‌هایی ارتباط دارد و داده‌های نمونه چه مواردی هستند.</p>
+
+  <h2>۱. معماری پیاده‌سازی</h2>
+  <pre>Web Controller → MediatR → Application Features → IUnitOfWork → EF Core → SQL Server</pre>
+  <ul>
+    <li>Controllerها نازک شده‌اند و تنها درخواست HTTP را با <code>Mediator.Send</code> به Feature می‌فرستند.</li>
+    <li>منطق دریافت، اعتبارسنجی ارتباط‌ها و ذخیره داده در <code>Application/Features</code> قرار دارد.</li>
+    <li>Entityها در Domain، تنظیم روابط در Infrastructure و DTOها در Application نگهداری می‌شوند.</li>
+  </ul>
+
+  <h2>۲. مدل‌ها و داده‌های ذخیره‌شونده</h2>
+  <h3>Project — پروژه</h3>
+  <table><tr><th>فیلد</th><th>نوع</th><th>داده ذخیره‌شونده</th></tr>
+    <tr><td>Id</td><td>int</td><td>شناسه یکتا</td></tr><tr><td>Key</td><td>string</td><td>کلید یکتا مانند WEB یا APP؛ مبنای کلید وظایف</td></tr>
+    <tr><td>Name و Description</td><td>string</td><td>نام و شرح پروژه</td></tr><tr><td>Type</td><td>enum</td><td>Scrum، Kanban یا Basic</td></tr>
+    <tr><td>Status</td><td>enum</td><td>Active، Archived یا Paused</td></tr><tr><td>Privacy</td><td>enum</td><td>Private یا Public</td></tr>
+    <tr><td>Icon و Color</td><td>string</td><td>اطلاعات نمایشی فرانت</td></tr><tr><td>StartDate و EndDate</td><td>DateTime?</td><td>بازه زمانی پروژه</td></tr>
+    <tr><td>Created، CreatedBy، lastModified، lastModifiedBy</td><td>Audit</td><td>اطلاعات ایجاد و آخرین تغییر</td></tr>
+  </table>
+  <p>هر پروژه چند عضو، چند اسپرینت و چند وظیفه دارد. درصد پیشرفت ستون مجزا ندارد و در خروجی API از نسبت وظایف Done به کل وظایف محاسبه می‌شود.</p>
+
+  <h3>ProjectMember — عضو پروژه</h3>
+  <table><tr><th>فیلد</th><th>داده ذخیره‌شونده</th></tr><tr><td>ProjectId</td><td>ارجاع به پروژه</td></tr><tr><td>UserId</td><td>شناسه کاربر عضو</td></tr><tr><td>Role</td><td>نقش کاربر در پروژه، مانند Project Manager یا Developer</td></tr></table>
+  <p>ترکیب ProjectId و UserId یکتا است؛ یک کاربر نمی‌تواند دوبار عضو یک پروژه شود.</p>
+
+  <h3>Sprint — اسپرینت</h3>
+  <table><tr><th>فیلد</th><th>داده ذخیره‌شونده</th></tr><tr><td>ProjectId</td><td>پروژه مالک اسپرینت</td></tr><tr><td>Name و Goal</td><td>نام و هدف اسپرینت</td></tr><tr><td>Status</td><td>Planned، Active یا Completed</td></tr><tr><td>StartDate و EndDate</td><td>تاریخ آغاز و پایان</td></tr></table>
+
+  <h3>WorkItem — وظیفه</h3>
+  <table><tr><th>فیلد</th><th>داده ذخیره‌شونده</th></tr>
+    <tr><td>ProjectId</td><td>پروژه اجباری وظیفه</td></tr><tr><td>SprintId</td><td>اسپرینت اختیاری وظیفه</td></tr><tr><td>ParentId</td><td>ارجاع به Epic یا وظیفه والد</td></tr>
+    <tr><td>Key</td><td>کلید نمایشی مانند WEB-2؛ در هر پروژه یکتا</td></tr><tr><td>Title و Description</td><td>عنوان و شرح کار</td></tr>
+    <tr><td>Type</td><td>Epic، Story، Task، Bug یا Subtask</td></tr><tr><td>Status</td><td>Todo، InProgress، Review یا Done</td></tr>
+    <tr><td>Priority</td><td>Lowest، Low، Medium، High یا Highest</td></tr><tr><td>AssigneeId و ReporterId</td><td>مسئول انجام و گزارش‌دهنده</td></tr>
+    <tr><td>StoryPoints</td><td>برآورد اختیاری پیچیدگی</td></tr><tr><td>DueDate و CompletedAt</td><td>مهلت انجام و زمان تکمیل</td></tr>
+  </table>
+  <p>حذف WorkItem نرم است؛ یعنی <code>IsDelete</code> تغییر می‌کند و داده برای گزارش یا بازیابی باقی می‌ماند.</p>
+
+  <h3>مدل‌های وابسته به WorkItem</h3>
+  <table><tr><th>مدل</th><th>داده ذخیره‌شونده</th></tr><tr><td>WorkItemLabel</td><td>WorkItemId، نام و رنگ برچسب</td></tr><tr><td>WorkItemComment</td><td>WorkItemId، AuthorId، متن نظر و اطلاعات Audit</td></tr><tr><td>WorkItemAttachment</td><td>WorkItemId، نام فایل، URL، نوع محتوا، حجم و اطلاعات Audit</td></tr></table>
+  <div class="note">Attachment فقط متادیتای فایل را ذخیره می‌کند. آپلود و نگهداری فیزیکی فایل هنوز پیاده‌سازی نشده است.</div>
+
+  <div class="page-break"></div>
+  <h2>۳. روابط داده</h2>
+  <pre>Project 1 ─── * ProjectMember
+Project 1 ─── * Sprint
+Project 1 ─── * WorkItem
+Sprint  1 ─── * WorkItem
+WorkItem 1 ── * WorkItem (Subtask)
+WorkItem 1 ── * Label / Comment / Attachment</pre>
+  <p>حذف دیتابیسی پروژه، اسپرینت‌ها و اعضای وابسته را حذف می‌کند. حذف اسپرینت، ارجاع SprintId وظایف را null می‌کند. WorkItem و Project از الگوی حذف نرم استفاده می‌کنند.</p>
+
+  <h2>۴. APIهای اضافه‌شده</h2>
+  <table><tr><th>متد</th><th>مسیر</th><th>کاربرد</th></tr>
+    <tr><td>GET</td><td>/api/tasks</td><td>فهرست وظایف با فیلتر projectId، sprintId، status، priority، assigneeId و search</td></tr>
+    <tr><td>GET / POST / PUT / DELETE</td><td>/api/tasks/{id}</td><td>جزئیات، ایجاد، ویرایش و حذف نرم وظیفه</td></tr>
+    <tr><td>PATCH</td><td>/api/tasks/{id}/status</td><td>تغییر وضعیت وظیفه</td></tr><tr><td>POST</td><td>/api/tasks/{id}/comments</td><td>ثبت نظر</td></tr><tr><td>POST</td><td>/api/tasks/{id}/attachments</td><td>ثبت متادیتای فایل</td></tr>
+    <tr><td>GET</td><td>/api/tasks/dashboard-stats</td><td>آمار کارت‌های داشبورد</td></tr><tr><td>GET / POST / PUT / DELETE</td><td>/api/Projects</td><td>مدیریت پروژه‌ها</td></tr>
+    <tr><td>GET / POST</td><td>/api/Sprints</td><td>دریافت و ایجاد اسپرینت</td></tr><tr><td>PATCH</td><td>/api/Sprints/{id}/status</td><td>تغییر وضعیت اسپرینت</td></tr>
+  </table>
+  <p>Enumها در JSON به صورت رشته دریافت می‌شوند؛ نمونه‌ها: <code>"inprogress"</code>، <code>"done"</code>، <code>"high"</code>.</p>
+
+  <h2>۵. Seed Data</h2>
+  <p>در <code>GenerateFakeData.SeedDataAsync</code>، Seed فقط زمانی اجرا می‌شود که جدول Projects خالی باشد؛ بنابراین داده تکراری ایجاد نمی‌شود.</p>
+  <table><tr><th>پروژه نمونه</th><th>محتوا</th></tr>
+    <tr><td>WEB — بازطراحی وب‌سایت</td><td>دو عضو، یک اسپرینت فعال، Epic احراز هویت، وظایف ورود و ثبت‌نام، باگ جستجو، برچسب، نظر و پیوست نمونه</td></tr>
+    <tr><td>APP — اپلیکیشن موبایل</td><td>یک عضو، یک اسپرینت فعال و دو وظیفه API و تست</td></tr>
+    <tr><td>CRM — سیستم مدیریت مشتریان</td><td>دو وظیفه در وضعیت Done و Review</td></tr>
+  </table>
+  <div class="ok">با اعمال migration و اجرای بک‌اند، seedها خودکار اجرا می‌شوند.</div>
+
+  <h2>۶. اتصال داشبورد</h2>
+  <p>فایل <code>frontend/src/lib/karnex-api.ts</code> ایجاد شد. داشبورد هم‌زمان آمار، وظایف، پروژه‌ها و اسپرینت‌ها را از API می‌گیرد. کارت‌های آمار، وظایف، پروژه‌های فعال، نمودار پروژه‌ها و اسپرینت‌های فعال داده واقعی دارند. فعالیت‌ها، جلسات و یادآورها هنوز Mock هستند.</p>
+  <pre>GET /api/tasks/dashboard-stats
+GET /api/tasks
+GET /api/projects
+GET /api/sprints</pre>
+
+  <h2>۷. راه‌اندازی</h2>
+  <pre>dotnet-ef database update --project src\Infrastructure\Infrastructure.csproj --startup-project src\Web\Web.csproj --context ApplicationDbContext</pre>
+  <p>آدرس پیش‌فرض API در فرانت <code>http://localhost:21547</code> است. در صورت نیاز، در فایل <code>.env</code> فرانت مقدار <code>VITE_API_URL</code> را تنظیم کنید. CORS برای پورت‌های 3000، 5173 و 4200 فعال شده است.</p>
+
+  <h2>۸. گام‌های پیشنهادی بعدی</h2>
+  <ul><li>افزودن Authorize و کنترل دسترسی بر اساس عضویت پروژه.</li><li>ساخت API اعضا، فعالیت‌ها، جلسات و یادآورها.</li><li>پیاده‌سازی آپلود واقعی فایل با MinIO یا Azure Blob.</li><li>افزودن FluentValidation برای Commandها.</li><li>اتصال Board، Backlog و Task Detail به API.</li></ul>
+</body>
+</html>
