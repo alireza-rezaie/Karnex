@@ -8,4 +8,4 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Sprints;
 
-[object Object]
+public record GetSprintsQuery(int? ProjectId) : IRequest<IReadOnlyList<SprintDto>>;
