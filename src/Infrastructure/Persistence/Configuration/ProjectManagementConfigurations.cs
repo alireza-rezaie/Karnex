@@ -104,6 +104,18 @@ public class WorkflowDefinitionRecordConfiguration : IEntityTypeConfiguration<Wo
     }
 }
 
+public class WorkflowPublishedVersionRecordConfiguration : IEntityTypeConfiguration<WorkflowPublishedVersionRecord>
+{
+    public void Configure(EntityTypeBuilder<WorkflowPublishedVersionRecord> builder)
+    {
+        builder.Property(x => x.PayloadJson).IsRequired();
+        builder.HasIndex(x => new { x.WorkflowDefinitionRecordId, x.Version }).IsUnique();
+        builder.HasOne(x => x.Workflow).WithMany(x => x.PublishedVersions)
+            .HasForeignKey(x => x.WorkflowDefinitionRecordId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasQueryFilter(x => !x.IsDelete);
+    }
+}
+
 public class ProjectWorkflowBoardSettingConfiguration : IEntityTypeConfiguration<ProjectWorkflowBoardSetting>
 {
     public void Configure(EntityTypeBuilder<ProjectWorkflowBoardSetting> builder)
