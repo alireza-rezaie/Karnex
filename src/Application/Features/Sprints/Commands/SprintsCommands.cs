@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Sprints;
 
-[object Object]
-[object Object]
-[object Object]
-[object Object]
+public record CreateSprintCommand(int ProjectId, string Name, string? Goal, DateTime StartDate, DateTime EndDate) : IRequest<SprintDto>;
+public record UpdateSprintCommand(int Id, string Name, string? Goal, DateTime StartDate, DateTime EndDate) : IRequest<SprintDto>;
+public record ChangeSprintStatusCommand(int Id, SprintStatus Status) : IRequest<SprintDto>;
+public record DeleteSprintCommand(int Id) : IRequest<bool>;
