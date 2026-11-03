@@ -14,14 +14,6 @@ private DbSet<Plan> Plans => unitOfWork.dbContext.Set<Plan>();
 public async Task<IReadOnlyList<PlanDto>> Handle(GetPlansQuery r, CancellationToken ct)
         => (await Plans.AsNoTracking().OrderBy(x => x.DisplayOrder).ToListAsync(ct)).Select(ToDto).ToList();
 
-    public async Task<PlanDto> Handle(CreatePlanCommand r, CancellationToken ct)
-    {
-        Validate(r.Name, r.PriceMonthly, r.PriceYearly, r.Users, r.Storage);
-        if (await Plans.AnyAsync(x => x.Name == r.Name.Trim(), ct)) throw new BadRequestEntityException("پلنی با این نام وجود دارد.");
-        var plan = new Plan { Name = r.Name.Trim(), Description = r.Description?.Trim() ?? "", PriceMonthly = r.PriceMonthly, PriceYearly = r.PriceYearly, Users = r.Users, FeaturesJson = JsonSerializer.Serialize(r.Features ?? []), Highlighted = r.Highlighted, Storage = r.Storage.Trim(), Active = r.Active, DisplayOrder = (await Plans.MaxAsync(x => (int?)x.DisplayOrder, ct) ?? 0) + 1 };
-        await unitOfWork.Repository<Plan>().AddAsync(plan, ct); await unitOfWork.Save(ct); return ToDto(plan);
-    }
-
 public async Task<SubscriptionDto?> Handle(GetCurrentSubscriptionQuery r, CancellationToken ct)
     { var item = await Subscriptions.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == RequireUser(), ct); return item is null ? null : ToDto(item); }
 
