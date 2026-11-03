@@ -22,15 +22,6 @@ public async Task<IReadOnlyList<ReminderDto>> Handle(GetRemindersQuery request, 
 public async Task<ReminderDto> Handle(GetReminderByIdQuery request, CancellationToken cancellationToken)
         => ToDto(await Reminders.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.Id, cancellationToken) ?? throw new NotFoundEntityException());
 
-    public async Task<ReminderDto> Handle(CreateReminderCommand request, CancellationToken cancellationToken)
-    {
-        await ValidateReferences(request.ProjectId, request.WorkItemId, cancellationToken);
-        var reminder = new Reminder { Title = request.Title.Trim(), Description = request.Description?.Trim(), ReminderAt = request.ReminderAt, Priority = request.Priority, UserId = request.UserId, ProjectId = request.ProjectId, WorkItemId = request.WorkItemId, CreatedBy = request.UserId ?? string.Empty };
-        await unitOfWork.Repository<Reminder>().AddAsync(reminder, cancellationToken);
-        await unitOfWork.Save(cancellationToken);
-        return ToDto(reminder);
-    }
-
 private async Task ValidateReferences(int? projectId, int? workItemId, CancellationToken ct)
     {
         if (projectId.HasValue && !await unitOfWork.dbContext.Set<Project>().AnyAsync(x => x.Id == projectId, ct)) throw new BadRequestEntityException("پروژه انتخاب‌شده وجود ندارد.");
