@@ -11,6 +11,16 @@ public class WorkflowDefinitionRecord : BaseAudiTableEntity
     public bool IsDraft { get; set; }
     public int Version { get; set; }
     public string PayloadJson { get; set; } = "{}";
+    public ICollection<WorkflowPublishedVersionRecord> PublishedVersions { get; set; } = new List<WorkflowPublishedVersionRecord>();
+}
+
+public class WorkflowPublishedVersionRecord : BaseAudiTableEntity
+{
+    public int WorkflowDefinitionRecordId { get; set; }
+    public int Version { get; set; }
+    public string PayloadJson { get; set; } = "{}";
+    public DateTime PublishedAt { get; set; } = DateTime.UtcNow;
+    public WorkflowDefinitionRecord Workflow { get; set; } = null!;
 }
 
 public class ProjectWorkflowBoardSetting : BaseAudiTableEntity
