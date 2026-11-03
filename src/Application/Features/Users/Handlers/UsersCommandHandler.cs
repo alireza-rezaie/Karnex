@@ -8,28 +8,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Users;
 
-public record GetManagedUsersQuery(string? Search) : IRequest<IReadOnlyList<ManagedUserDto>>;
-public record CreateManagedUserCommand(string DisplayName, string Email, string PhoneNumber, string Password, string Role) : IRequest<ManagedUserDto>;
-public record UpdateManagedUserCommand(string Id, string DisplayName, string Email, string PhoneNumber, string UserName) : IRequest<ManagedUserDto>;
-public record ChangeManagedUserRoleCommand(string Id, string Role) : IRequest<ManagedUserDto>;
-public record SetManagedUserLockCommand(string Id, bool IsLocked) : IRequest<ManagedUserDto>;
-
-public class UserManagementHandler(UserManager<User> userManager, RoleManager<Role> roleManager, Application.Contracts.IUnitOfWork unitOfWork) : IRequestHandler<GetManagedUsersQuery, IReadOnlyList<ManagedUserDto>>, IRequestHandler<CreateManagedUserCommand, ManagedUserDto>, IRequestHandler<UpdateManagedUserCommand, ManagedUserDto>, IRequestHandler<ChangeManagedUserRoleCommand, ManagedUserDto>, IRequestHandler<SetManagedUserLockCommand, ManagedUserDto>
+public sealed class UserManagementCommandHandler(UserManager<User> userManager, RoleManager<Role> roleManager, Application.Contracts.IUnitOfWork unitOfWork) : IRequestHandler<CreateManagedUserCommand, ManagedUserDto>, IRequestHandler<UpdateManagedUserCommand, ManagedUserDto>, IRequestHandler<ChangeManagedUserRoleCommand, ManagedUserDto>, IRequestHandler<SetManagedUserLockCommand, ManagedUserDto>
 {
-    public async Task<IReadOnlyList<ManagedUserDto>> Handle(GetManagedUsersQuery request, CancellationToken ct)
-    {
-        var query = userManager.Users.AsNoTracking();
-        if (!string.IsNullOrWhiteSpace(request.Search)) query = query.Where(x => x.DisplayName.Contains(request.Search) || x.Email.Contains(request.Search) || x.PhoneNumber.Contains(request.Search));
-        var users = await query.OrderBy(x => x.DisplayName).ToListAsync(ct);
-        // UserManager and the unit of work share the scoped DbContext.  Build
-        // the DTOs sequentially so their role/task/project queries cannot run
-        // concurrently on that context.
-        var result = new List<ManagedUserDto>(users.Count);
-        foreach (var user in users) result.Add(await ToDto(user, ct));
-        return result;
-    }
 
-    public async Task<ManagedUserDto> Handle(CreateManagedUserCommand request, CancellationToken ct)
+public async Task<ManagedUserDto> Handle(CreateManagedUserCommand request, CancellationToken ct)
     {
         if (!await roleManager.RoleExistsAsync(request.Role)) throw new BadRequestEntityException("نقش انتخاب‌شده معتبر نیست.");
         if (await userManager.Users.AnyAsync(x => x.Email == request.Email || x.PhoneNumber == request.PhoneNumber, ct)) throw new BadRequestEntityException("ایمیل یا شماره همراه تکراری است.");
@@ -41,7 +23,7 @@ public class UserManagementHandler(UserManager<User> userManager, RoleManager<Ro
         return await ToDto(user, ct);
     }
 
-    public async Task<ManagedUserDto> Handle(UpdateManagedUserCommand request, CancellationToken ct)
+public async Task<ManagedUserDto> Handle(UpdateManagedUserCommand request, CancellationToken ct)
     {
         var user = await userManager.FindByIdAsync(request.Id) ?? throw new NotFoundEntityException();
         var email = request.Email.Trim(); var phone = request.PhoneNumber.Trim(); var userName = request.UserName.Trim();
@@ -58,7 +40,7 @@ public class UserManagementHandler(UserManager<User> userManager, RoleManager<Ro
         return await ToDto(user, ct);
     }
 
-    public async Task<ManagedUserDto> Handle(ChangeManagedUserRoleCommand request, CancellationToken ct)
+public async Task<ManagedUserDto> Handle(ChangeManagedUserRoleCommand request, CancellationToken ct)
     {
         if (!await roleManager.RoleExistsAsync(request.Role)) throw new BadRequestEntityException("نقش انتخاب‌شده معتبر نیست.");
         var user = await userManager.FindByIdAsync(request.Id) ?? throw new NotFoundEntityException();
@@ -70,7 +52,7 @@ public class UserManagementHandler(UserManager<User> userManager, RoleManager<Ro
         return await ToDto(user, ct);
     }
 
-    public async Task<ManagedUserDto> Handle(SetManagedUserLockCommand request, CancellationToken ct)
+public async Task<ManagedUserDto> Handle(SetManagedUserLockCommand request, CancellationToken ct)
     {
         var user = await userManager.FindByIdAsync(request.Id) ?? throw new NotFoundEntityException();
         var result = await userManager.SetLockoutEndDateAsync(user, request.IsLocked ? DateTimeOffset.MaxValue : null);
@@ -78,7 +60,7 @@ public class UserManagementHandler(UserManager<User> userManager, RoleManager<Ro
         return await ToDto(user, ct);
     }
 
-    private async Task<ManagedUserDto> ToDto(User user, CancellationToken ct)
+private async Task<ManagedUserDto> ToDto(User user, CancellationToken ct)
     {
         var roles = await userManager.GetRolesAsync(user);
         var taskCount = await unitOfWork.dbContext.Set<WorkItem>().CountAsync(x => x.AssigneeId == user.Id && x.Status != Domain.Enums.WorkItemStatus.Done, ct);

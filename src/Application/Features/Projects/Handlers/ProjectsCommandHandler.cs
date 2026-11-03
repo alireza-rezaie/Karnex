@@ -8,37 +8,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Projects;
 
-public record GetProjectsQuery : IRequest<IReadOnlyList<ProjectDto>>;
-public record GetProjectByIdQuery(int Id) : IRequest<ProjectDetailsDto>;
-public record CreateProjectCommand(string Key, string Name, string? Description, ProjectType Type, ProjectPrivacy Privacy, string? Icon, string? Color, DateTime? StartDate, DateTime? EndDate) : IRequest<ProjectDto>;
-public record UpdateProjectCommand(int Id, string Name, string? Description, ProjectType Type, ProjectStatus Status, ProjectPrivacy Privacy, string? Icon, string? Color, DateTime? StartDate, DateTime? EndDate) : IRequest<ProjectDto>;
-public record DeleteProjectCommand(int Id) : IRequest<bool>;
-public record ArchiveProjectCommand(int Id) : IRequest<ProjectDto>;
-public record AddProjectMemberCommand(int ProjectId, string UserId, string? Role) : IRequest<ProjectMemberDto>;
-public record UpdateProjectMemberRoleCommand(int ProjectId, string UserId, string? Role) : IRequest<ProjectMemberDto>;
-public record RemoveProjectMemberCommand(int ProjectId, string UserId) : IRequest<bool>;
-
-public class ProjectHandler(IUnitOfWork unitOfWork, ICurrentUserService currentUser) : IRequestHandler<GetProjectsQuery, IReadOnlyList<ProjectDto>>, IRequestHandler<GetProjectByIdQuery, ProjectDetailsDto>, IRequestHandler<CreateProjectCommand, ProjectDto>, IRequestHandler<UpdateProjectCommand, ProjectDto>, IRequestHandler<DeleteProjectCommand, bool>, IRequestHandler<ArchiveProjectCommand, ProjectDto>, IRequestHandler<AddProjectMemberCommand, ProjectMemberDto>, IRequestHandler<UpdateProjectMemberRoleCommand, ProjectMemberDto>, IRequestHandler<RemoveProjectMemberCommand, bool>
+public sealed class ProjectCommandHandler(IUnitOfWork unitOfWork, ICurrentUserService currentUser) : IRequestHandler<CreateProjectCommand, ProjectDto>, IRequestHandler<UpdateProjectCommand, ProjectDto>, IRequestHandler<DeleteProjectCommand, bool>, IRequestHandler<ArchiveProjectCommand, ProjectDto>, IRequestHandler<AddProjectMemberCommand, ProjectMemberDto>, IRequestHandler<UpdateProjectMemberRoleCommand, ProjectMemberDto>, IRequestHandler<RemoveProjectMemberCommand, bool>
 {
-    private DbSet<Project> Projects => unitOfWork.dbContext.Set<Project>();
+private DbSet<Project> Projects => unitOfWork.dbContext.Set<Project>();
     private DbSet<ProjectMember> ProjectMembers => unitOfWork.dbContext.Set<ProjectMember>();
-
-    public async Task<IReadOnlyList<ProjectDto>> Handle(GetProjectsQuery r, CancellationToken ct)
-    {
-        var userId = RequireCurrentUser();
-        return (await Projects.AsNoTracking().Where(x => x.Members.Any(m => m.UserId == userId))
-            .Include(x => x.WorkItems).OrderBy(x => x.Name).ToListAsync(ct)).Select(ToDto).ToList();
-    }
-
-    public async Task<ProjectDetailsDto> Handle(GetProjectByIdQuery r, CancellationToken ct)
-    {
-        var userId = RequireCurrentUser();
-        var project = await Projects.AsNoTracking().Where(x => x.Id == r.Id && x.Members.Any(m => m.UserId == userId))
-            .Include(x => x.WorkItems).Include(x => x.Members).FirstOrDefaultAsync(ct) ?? throw new NotFoundEntityException();
-        return ToDetailsDto(project);
-    }
-
-    public async Task<ProjectDto> Handle(CreateProjectCommand r, CancellationToken ct)
+public async Task<ProjectDto> Handle(CreateProjectCommand r, CancellationToken ct)
     {
         var userId = RequireCurrentUser();
         var key = r.Key.Trim().ToUpperInvariant();
@@ -50,27 +24,27 @@ public class ProjectHandler(IUnitOfWork unitOfWork, ICurrentUserService currentU
         return ToDto(project);
     }
 
-    public async Task<ProjectDto> Handle(UpdateProjectCommand r, CancellationToken ct)
+public async Task<ProjectDto> Handle(UpdateProjectCommand r, CancellationToken ct)
     {
         var project = await AccessibleManagedProject(r.Id, ct);
         project.Name = r.Name.Trim(); project.Description = r.Description?.Trim() ?? string.Empty; project.Type = r.Type; project.Status = r.Status; project.Privacy = r.Privacy; project.Icon = r.Icon ?? "folder"; project.Color = r.Color ?? "#3b82f6"; project.StartDate = r.StartDate; project.EndDate = r.EndDate; project.lastModified = DateTime.UtcNow;
         await unitOfWork.Save(ct); return ToDto(project);
     }
 
-    public async Task<bool> Handle(DeleteProjectCommand r, CancellationToken ct)
+public async Task<bool> Handle(DeleteProjectCommand r, CancellationToken ct)
     {
         var project = await AccessibleManagedProject(r.Id, ct);
         project.IsDelete = true; project.lastModified = DateTime.UtcNow; await unitOfWork.Save(ct); return true;
     }
 
-    public async Task<ProjectDto> Handle(ArchiveProjectCommand r, CancellationToken ct)
+public async Task<ProjectDto> Handle(ArchiveProjectCommand r, CancellationToken ct)
     {
         var project = await AccessibleManagedProject(r.Id, ct);
         project.Status = ProjectStatus.Archived; project.lastModified = DateTime.UtcNow;
         await unitOfWork.Save(ct); return ToDto(project);
     }
 
-    public async Task<ProjectMemberDto> Handle(AddProjectMemberCommand r, CancellationToken ct)
+public async Task<ProjectMemberDto> Handle(AddProjectMemberCommand r, CancellationToken ct)
     {
         var project = await AccessibleManagedProject(r.ProjectId, ct);
         var userId = RequiredUserId(r.UserId);
@@ -79,7 +53,7 @@ public class ProjectHandler(IUnitOfWork unitOfWork, ICurrentUserService currentU
         await ProjectMembers.AddAsync(member, ct); await unitOfWork.Save(ct); return ToMemberDto(member);
     }
 
-    public async Task<ProjectMemberDto> Handle(UpdateProjectMemberRoleCommand r, CancellationToken ct)
+public async Task<ProjectMemberDto> Handle(UpdateProjectMemberRoleCommand r, CancellationToken ct)
     {
         await AccessibleManagedProject(r.ProjectId, ct);
         var userId = RequiredUserId(r.UserId);
@@ -87,7 +61,7 @@ public class ProjectHandler(IUnitOfWork unitOfWork, ICurrentUserService currentU
         member.Role = NormalizeRole(r.Role); await unitOfWork.Save(ct); return ToMemberDto(member);
     }
 
-    public async Task<bool> Handle(RemoveProjectMemberCommand r, CancellationToken ct)
+public async Task<bool> Handle(RemoveProjectMemberCommand r, CancellationToken ct)
     {
         var project = await AccessibleManagedProject(r.ProjectId, ct);
         var userId = RequiredUserId(r.UserId);
@@ -97,7 +71,7 @@ public class ProjectHandler(IUnitOfWork unitOfWork, ICurrentUserService currentU
         ProjectMembers.Remove(member); await unitOfWork.Save(ct); return true;
     }
 
-    private async Task<Project> AccessibleManagedProject(int projectId, CancellationToken ct)
+private async Task<Project> AccessibleManagedProject(int projectId, CancellationToken ct)
     {
         var userId = RequireCurrentUser();
         var project = await Projects.Include(x => x.WorkItems).Include(x => x.Members)

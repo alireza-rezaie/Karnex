@@ -15,7 +15,7 @@ using System.Threading.Tasks;
 
 namespace Application.Features.Account.Commands.LoginUser
 {
-    public class LoginQueryCommand : IRequestHandler<LoginCommand, UserDto>
+    public class LoginCommandHandler : IRequestHandler<LoginCommand, UserDto>
     {
         private readonly IMapper _mapper;
         private readonly SignInManager<User> _signInManager;
@@ -23,7 +23,7 @@ namespace Application.Features.Account.Commands.LoginUser
         private readonly ITokenService _tokenService;
 
 
-        public LoginQueryCommand(IMapper mapper, SignInManager<User> signInManager, IUnitOfWork unitOfWork, ITokenService tokenService)
+        public LoginCommandHandler(IMapper mapper, SignInManager<User> signInManager, IUnitOfWork unitOfWork, ITokenService tokenService)
         {
             _mapper = mapper;
             _signInManager = signInManager;

@@ -8,33 +8,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Meetings;
 
-public record GetMeetingsQuery(DateTime? Date, int? ProjectId) : IRequest<IReadOnlyList<MeetingDto>>;
-public record GetMeetingByIdQuery(int Id) : IRequest<MeetingDto>;
-public record CreateMeetingCommand(string Title, string? Description, string? Location, string? MeetingUrl, DateTime StartsAt, DateTime EndsAt, string? OrganizerId, int? ProjectId, IReadOnlyList<string>? ParticipantIds) : IRequest<MeetingDto>;
-public record UpdateMeetingCommand(int Id, string Title, string? Description, string? Location, string? MeetingUrl, DateTime StartsAt, DateTime EndsAt, MeetingStatus Status, string? OrganizerId, int? ProjectId, IReadOnlyList<string>? ParticipantIds) : IRequest<MeetingDto>;
-public record UpdateMeetingStatusCommand(int Id, MeetingStatus Status) : IRequest<MeetingDto>;
-public record DeleteMeetingCommand(int Id) : IRequest<bool>;
-
-public class MeetingHandler(IUnitOfWork unitOfWork) : IRequestHandler<GetMeetingsQuery, IReadOnlyList<MeetingDto>>, IRequestHandler<GetMeetingByIdQuery, MeetingDto>, IRequestHandler<CreateMeetingCommand, MeetingDto>, IRequestHandler<UpdateMeetingCommand, MeetingDto>, IRequestHandler<UpdateMeetingStatusCommand, MeetingDto>, IRequestHandler<DeleteMeetingCommand, bool>
+public sealed class MeetingCommandHandler(IUnitOfWork unitOfWork) : IRequestHandler<CreateMeetingCommand, MeetingDto>, IRequestHandler<UpdateMeetingCommand, MeetingDto>, IRequestHandler<UpdateMeetingStatusCommand, MeetingDto>, IRequestHandler<DeleteMeetingCommand, bool>
 {
-    private DbSet<Meeting> Meetings => unitOfWork.dbContext.Set<Meeting>();
-
-    public async Task<IReadOnlyList<MeetingDto>> Handle(GetMeetingsQuery request, CancellationToken ct)
-    {
-        var query = Meetings.AsNoTracking().Include(x => x.Participants).AsQueryable();
-        if (request.ProjectId.HasValue) query = query.Where(x => x.ProjectId == request.ProjectId);
-        if (request.Date.HasValue)
-        {
-            var start = request.Date.Value.Date;
-            query = query.Where(x => x.StartsAt >= start && x.StartsAt < start.AddDays(1));
-        }
-        return (await query.OrderBy(x => x.StartsAt).ToListAsync(ct)).Select(ToDto).ToList();
-    }
-
-    public async Task<MeetingDto> Handle(GetMeetingByIdQuery request, CancellationToken ct)
-        => ToDto(await Meetings.AsNoTracking().Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == request.Id, ct) ?? throw new NotFoundEntityException());
-
-    public async Task<MeetingDto> Handle(CreateMeetingCommand request, CancellationToken ct)
+private DbSet<Meeting> Meetings => unitOfWork.dbContext.Set<Meeting>();
+public async Task<MeetingDto> Handle(CreateMeetingCommand request, CancellationToken ct)
     {
         ValidateTimes(request.StartsAt, request.EndsAt);
         await ValidateProject(request.ProjectId, ct);
@@ -45,7 +22,7 @@ public class MeetingHandler(IUnitOfWork unitOfWork) : IRequestHandler<GetMeeting
         return ToDto(meeting);
     }
 
-    public async Task<MeetingDto> Handle(UpdateMeetingCommand request, CancellationToken ct)
+public async Task<MeetingDto> Handle(UpdateMeetingCommand request, CancellationToken ct)
     {
         ValidateTimes(request.StartsAt, request.EndsAt);
         await ValidateProject(request.ProjectId, ct);
@@ -57,7 +34,7 @@ public class MeetingHandler(IUnitOfWork unitOfWork) : IRequestHandler<GetMeeting
         return ToDto(meeting);
     }
 
-    public async Task<MeetingDto> Handle(UpdateMeetingStatusCommand request, CancellationToken ct)
+public async Task<MeetingDto> Handle(UpdateMeetingStatusCommand request, CancellationToken ct)
     {
         var meeting = await Meetings.Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == request.Id, ct) ?? throw new NotFoundEntityException();
         meeting.Status = request.Status; meeting.lastModified = DateTime.UtcNow;
@@ -65,7 +42,7 @@ public class MeetingHandler(IUnitOfWork unitOfWork) : IRequestHandler<GetMeeting
         return ToDto(meeting);
     }
 
-    public async Task<bool> Handle(DeleteMeetingCommand request, CancellationToken ct)
+public async Task<bool> Handle(DeleteMeetingCommand request, CancellationToken ct)
     {
         var meeting = await Meetings.FirstOrDefaultAsync(x => x.Id == request.Id, ct) ?? throw new NotFoundEntityException();
         meeting.IsDelete = true; meeting.lastModified = DateTime.UtcNow;
@@ -73,7 +50,7 @@ public class MeetingHandler(IUnitOfWork unitOfWork) : IRequestHandler<GetMeeting
         return true;
     }
 
-    private async Task ValidateProject(int? projectId, CancellationToken ct)
+private async Task ValidateProject(int? projectId, CancellationToken ct)
     {
         if (projectId.HasValue && !await unitOfWork.dbContext.Set<Project>().AnyAsync(x => x.Id == projectId, ct)) throw new BadRequestEntityException("پروژه انتخاب‌شده وجود ندارد.");
     }
