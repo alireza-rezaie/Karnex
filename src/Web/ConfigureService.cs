@@ -1,7 +1,8 @@
-﻿using Application.Contracts;
+using Application.Contracts;
 using Domain.Exceptions;
 using Infrastructure.Persistence.Context;
 using Infrastructure.Persistence.SeedData;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -19,15 +20,21 @@ static class ConfigureService
     public static IServiceCollection AddWebConfigureServices(this WebApplicationBuilder builder,
         IConfiguration configuration)
     {
-        // Add services to the container.
+        // Require an authenticated principal for every endpoint unless it is
+        // explicitly marked with [AllowAnonymous]. This prevents newly added
+        // controllers/actions from accidentally becoming public.
+        builder.Services.AddAuthorization(options =>
+        {
+            options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build();
+        });
 
         builder.Services.AddControllers().AddJsonOptions(options =>
             options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
-        //ApiBehaviorOptions(builder);
-        // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
         builder.Services.AddEndpointsApiExplorer();
         builder.Services.AddSwaggerDocumentation();
-        //Corss Policy
+
         builder.Services.AddCors(opt =>
         {
             opt.AddPolicy("CorsPolicy", policy =>
@@ -39,17 +46,15 @@ static class ConfigureService
                     "http://localhost:3000", "https://localhost:3000");
             });
         });
-        //I Http Contex IAccessor
+
         builder.Services.AddSingleton<ICurrentUserService, CurrentUserService>();
         builder.Services.AddHttpContextAccessor();
-        //Cache Memory
         builder.Services.AddDistributedMemoryCache();
         return builder.Services;
     }
 
     private static void ApiBehaviorOptions(WebApplicationBuilder builder)
     {
-        //TODO check this
         builder.Services.Configure<ApiBehaviorOptions>(options =>
         {
             options.InvalidModelStateResponseFactory = actionContext =>
@@ -63,25 +68,20 @@ static class ConfigureService
             };
         });
     }
+
     public static async Task<IApplicationBuilder> AddWebAppService(this WebApplication app)
     {
-
         app.UseMiddleware<MiddlewareExceptionHandler>();
 
-
-        //Create Scoped
         var scope = app.Services.CreateScope();
         var services = scope.ServiceProvider;
-        //get services
         var loggerFactory = services.GetRequiredService<ILoggerFactory>();
         var context = services.GetRequiredService<ApplicationDbContext>();
 
-        //Auto migration
         try
         {
             await context.Database.MigrateAsync();
             await GenerateFakeData.SeedDataAsync(context, loggerFactory);
-
         }
         catch (Exception e)
         {
@@ -89,22 +89,16 @@ static class ConfigureService
             logger.LogError(e, "Error Exception For Migration");
         }
 
-        // Configure the HTTP request pipeline.
         if (app.Environment.IsDevelopment())
         {
-            //app.UseSwagger();
-            //app.UseSwaggerUI();
             app.UseSwaggerDocumentation();
-
         }
-        //access to wwwroot
+
         app.UseStaticFiles();
         app.UseRouting();
-        //Cors
         app.UseCors("CorsPolicy");
         app.UseAuthentication();
         app.UseAuthorization();
-
 
         app.MapControllers();
 
@@ -112,4 +106,3 @@ static class ConfigureService
         return app;
     }
 }
-
