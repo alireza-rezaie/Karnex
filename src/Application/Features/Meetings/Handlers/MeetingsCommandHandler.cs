@@ -8,9 +8,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Meetings;
 
-public sealed class MeetingCommandHandler(IUnitOfWork unitOfWork) : IRequestHandler<UpdateMeetingCommand, MeetingDto>, IRequestHandler<UpdateMeetingStatusCommand, MeetingDto>, IRequestHandler<DeleteMeetingCommand, bool>
+public sealed class MeetingCommandHandler(IUnitOfWork unitOfWork) : IRequestHandler<CreateMeetingCommand, MeetingDto>, IRequestHandler<UpdateMeetingCommand, MeetingDto>, IRequestHandler<UpdateMeetingStatusCommand, MeetingDto>, IRequestHandler<DeleteMeetingCommand, bool>
 {
 private DbSet<Meeting> Meetings => unitOfWork.dbContext.Set<Meeting>();
+public async Task<MeetingDto> Handle(CreateMeetingCommand request, CancellationToken ct)
+    {
+        ValidateTimes(request.StartsAt, request.EndsAt);
+        await ValidateProject(request.ProjectId, ct);
+        var meeting = new Meeting { Title = request.Title.Trim(), Description = request.Description?.Trim(), Location = request.Location?.Trim(), MeetingUrl = request.MeetingUrl?.Trim(), StartsAt = request.StartsAt, EndsAt = request.EndsAt, OrganizerId = request.OrganizerId, ProjectId = request.ProjectId, CreatedBy = request.OrganizerId ?? string.Empty };
+        SetParticipants(meeting, request.ParticipantIds);
+        await unitOfWork.Repository<Meeting>().AddAsync(meeting, ct);
+        await unitOfWork.Save(ct);
+        return ToDto(meeting);
+    }
+
 public async Task<MeetingDto> Handle(UpdateMeetingCommand request, CancellationToken ct)
     {
         ValidateTimes(request.StartsAt, request.EndsAt);
