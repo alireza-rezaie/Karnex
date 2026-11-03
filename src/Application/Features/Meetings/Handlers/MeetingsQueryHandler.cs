@@ -26,17 +26,6 @@ public async Task<IReadOnlyList<MeetingDto>> Handle(GetMeetingsQuery request, Ca
 public async Task<MeetingDto> Handle(GetMeetingByIdQuery request, CancellationToken ct)
         => ToDto(await Meetings.AsNoTracking().Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == request.Id, ct) ?? throw new NotFoundEntityException());
 
-    public async Task<MeetingDto> Handle(CreateMeetingCommand request, CancellationToken ct)
-    {
-        ValidateTimes(request.StartsAt, request.EndsAt);
-        await ValidateProject(request.ProjectId, ct);
-        var meeting = new Meeting { Title = request.Title.Trim(), Description = request.Description?.Trim(), Location = request.Location?.Trim(), MeetingUrl = request.MeetingUrl?.Trim(), StartsAt = request.StartsAt, EndsAt = request.EndsAt, OrganizerId = request.OrganizerId, ProjectId = request.ProjectId, CreatedBy = request.OrganizerId ?? string.Empty };
-        SetParticipants(meeting, request.ParticipantIds);
-        await unitOfWork.Repository<Meeting>().AddAsync(meeting, ct);
-        await unitOfWork.Save(ct);
-        return ToDto(meeting);
-    }
-
 private async Task ValidateProject(int? projectId, CancellationToken ct)
     {
         if (projectId.HasValue && !await unitOfWork.dbContext.Set<Project>().AnyAsync(x => x.Id == projectId, ct)) throw new BadRequestEntityException("پروژه انتخاب‌شده وجود ندارد.");
