@@ -7,7 +7,7 @@ using Web.Common;
 namespace Web.Controllers;
 
 [Authorize(Roles = "Admin")]
-[Route("api/users")]
+[Route("Admin/api/users")]
 public class UsersController : BaseApiController
 {
     [HttpGet]

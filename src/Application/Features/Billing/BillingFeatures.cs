@@ -23,7 +23,8 @@ public class BillingHandler(IUnitOfWork unitOfWork, ICurrentUserService currentU
     private DbSet<Plan> Plans => unitOfWork.dbContext.Set<Plan>();
     private DbSet<UserSubscription> Subscriptions => unitOfWork.dbContext.Set<UserSubscription>();
 
-    public async Task<IReadOnlyList<PlanDto>> Handle(GetPlansQuery r, CancellationToken ct) => (await Plans.AsNoTracking().OrderBy(x => x.DisplayOrder).ToListAsync(ct)).Select(ToDto).ToList();
+    public async Task<IReadOnlyList<PlanDto>> Handle(GetPlansQuery r, CancellationToken ct)
+        => (await Plans.AsNoTracking().OrderBy(x => x.DisplayOrder).ToListAsync(ct)).Select(ToDto).ToList();
 
     public async Task<PlanDto> Handle(CreatePlanCommand r, CancellationToken ct)
     {

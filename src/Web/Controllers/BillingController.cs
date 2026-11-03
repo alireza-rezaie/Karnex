@@ -8,7 +8,9 @@ namespace Web.Controllers;
 [Route("api/billing")]
 public class BillingController : BaseApiController
 {
-    [HttpGet("plans")] public async Task<ActionResult<IReadOnlyList<PlanDto>>> ListPlans(CancellationToken ct) => Ok(await Mediator.Send(new GetPlansQuery(), ct));
+    [HttpGet("plans")] 
+    public async Task<ActionResult<IReadOnlyList<PlanDto>>> ListPlans(CancellationToken ct)
+        => Ok(await Mediator.Send(new GetPlansQuery(), ct));
     [Authorize]
     [HttpPost("plans")] public async Task<ActionResult<PlanDto>> CreatePlan(CreatePlanCommand request, CancellationToken ct) => Ok(await Mediator.Send(request, ct));
     [Authorize]
