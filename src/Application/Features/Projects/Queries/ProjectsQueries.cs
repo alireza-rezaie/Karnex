@@ -8,5 +8,5 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Projects;
 
-[object Object]
-[object Object]
+public record GetProjectsQuery : IRequest<IReadOnlyList<ProjectDto>>;
+public record GetProjectByIdQuery(int Id) : IRequest<ProjectDetailsDto>;
