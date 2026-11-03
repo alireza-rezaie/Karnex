@@ -1,10 +1,14 @@
 using System;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Infrastructure.Persistence.Context;
 
 #nullable disable
 
 namespace Infrastructure.Migrations
 {
+    [DbContext(typeof(ApplicationDbContext))]
+    [Migration("20261103070000_AddWorkflowPublishedVersions")]
     public partial class AddWorkflowPublishedVersions : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)
