@@ -104,7 +104,7 @@ public static class GenerateFakeData
         var result = new Dictionary<string, User>();
         foreach (var definition in definitions)
         {
-            var user = await db.User.SingleOrDefaultAsync(x => x.Id == definition.Id)
+            var user = await db.User.SingleOrDefaultAsync(x => x.Id == definition.Key)
                 ?? await db.User.SingleOrDefaultAsync(x => x.PhoneNumber == definition.Phone)
                 ?? await db.User.SingleOrDefaultAsync(x => x.Email == definition.Email);
 
@@ -112,7 +112,7 @@ public static class GenerateFakeData
             {
                 user = new User
                 {
-                    Id = definition.Id,
+                    Id = definition.Key,
                     UserName = definition.Phone,
                     NormalizedUserName = definition.Phone,
                     PhoneNumber = definition.Phone,
