@@ -19,8 +19,10 @@ public async Task<WorkItemDto> Handle(CreateWorkItemCommand r, CancellationToken
             ?? throw new NotFoundEntityException();
         if (r.SprintId.HasValue && !await unitOfWork.dbContext.Set<Sprint>().AnyAsync(x => x.Id == r.SprintId && x.ProjectId == r.ProjectId, ct)) throw new BadRequestEntityException("اسپرینت برای این پروژه معتبر نیست.");
         if (r.ParentId.HasValue && !await Items.AnyAsync(x => x.Id == r.ParentId && x.ProjectId == r.ProjectId, ct)) throw new BadRequestEntityException("تسک والد برای این پروژه معتبر نیست.");
+        if (!string.IsNullOrWhiteSpace(r.AssigneeId) && !await unitOfWork.dbContext.Set<ProjectMember>().AnyAsync(x => x.ProjectId == r.ProjectId && x.UserId == r.AssigneeId, ct))
+            throw new BadRequestEntityException("مسئول انتخاب‌شده عضو این پروژه نیست.");
         var number = await Items.IgnoreQueryFilters().CountAsync(x => x.ProjectId == r.ProjectId, ct) + 1;
-        var item = new WorkItem { ProjectId = r.ProjectId, Key = $"{project.Key}-{number}", Title = r.Title.Trim(), Description = r.Description?.Trim() ?? string.Empty, Type = r.Type, Priority = r.Priority, AssigneeId = r.AssigneeId, ReporterId = userId, SprintId = r.SprintId, ParentId = r.ParentId, StoryPoints = r.StoryPoints, DueDate = r.DueDate, CreatedBy = r.ReporterId ?? string.Empty, Labels = Labels(r.Labels) };
+        var item = new WorkItem { ProjectId = r.ProjectId, Key = $"{project.Key}-{number}", Title = r.Title.Trim(), Description = r.Description?.Trim() ?? string.Empty, Type = r.Type, Priority = r.Priority, AssigneeId = r.AssigneeId, ReporterId = userId, SprintId = r.SprintId, ParentId = r.ParentId, StoryPoints = r.StoryPoints, DueDate = r.DueDate, CreatedBy = userId ?? string.Empty, Labels = Labels(r.Labels) };
         await unitOfWork.Repository<WorkItem>().AddAsync(item, ct); await unitOfWork.Save(ct); return ToDto(item);
     }
 
@@ -42,7 +44,7 @@ public async Task<bool> Handle(DeleteWorkItemCommand r, CancellationToken ct) { 
 
 public async Task<bool> Handle(AddWorkItemCommentCommand r, CancellationToken ct) { var userId = currentUserService.UserId; if (userId == null || !await AccessibleItems(Items).AnyAsync(x => x.Id == r.Id, ct)) throw new NotFoundEntityException(); await unitOfWork.Repository<WorkItemComment>().AddAsync(new() { WorkItemId = r.Id, AuthorId = userId, Content = r.Content.Trim(), CreatedBy = userId }, ct); await unitOfWork.Save(ct); return true; }
 
-public async Task<bool> Handle(AddWorkItemAttachmentCommand r, CancellationToken ct) { if (!await AccessibleItems(Items).AnyAsync(x => x.Id == r.Id, ct)) throw new NotFoundEntityException(); await unitOfWork.Repository<WorkItemAttachment>().AddAsync(new() { WorkItemId = r.Id, FileName = r.FileName.Trim(), FileUrl = r.FileUrl.Trim(), ContentType = r.ContentType, Size = r.Size }, ct); await unitOfWork.Save(ct); return true; }
+public async Task<bool> Handle(AddWorkItemAttachmentCommand r, CancellationToken ct) { if (!await AccessibleItems(Items).AnyAsync(x => x.Id == r.Id, ct)) throw new NotFoundEntityException(); await unitOfWork.Repository<WorkItemAttachment>().AddAsync(new() { WorkItemId = r.Id, FileName = r.FileName.Trim(), FileUrl = r.FileUrl.Trim(), ContentType = r.ContentType, Size = r.Size, CreatedBy = currentUserService.UserId ?? string.Empty }, ct); await unitOfWork.Save(ct); return true; }
 
 private IQueryable<WorkItem> AccessibleItems(IQueryable<WorkItem> query) { var userId = currentUserService.UserId; return query.Where(x => userId != null && unitOfWork.dbContext.Set<ProjectMember>().Any(member => member.ProjectId == x.ProjectId && member.UserId == userId)); }
     private static IQueryable<WorkItem> Detail(IQueryable<WorkItem> query) => query.Include(x => x.Labels).Include(x => x.Comments).Include(x => x.Attachments).Include(x => x.Subtasks);
