@@ -52,6 +52,5 @@ public async Task<DashboardTaskStatsDto> Handle(GetDashboardTaskStatsQuery r, Ca
 
 private IQueryable<WorkItem> AccessibleItems(IQueryable<WorkItem> query) { var userId = currentUserService.UserId; return query.Where(x => userId != null && unitOfWork.dbContext.Set<ProjectMember>().Any(member => member.ProjectId == x.ProjectId && member.UserId == userId)); }
     private static IQueryable<WorkItem> Detail(IQueryable<WorkItem> query) => query.Include(x => x.Labels).Include(x => x.Comments).Include(x => x.Attachments).Include(x => x.Subtasks);
-    private static List<WorkItemLabel> Labels(IEnumerable<LabelDto>? labels) => labels?.Where(x => !string.IsNullOrWhiteSpace(x.Name)).Select(x => new WorkItemLabel { Name = x.Name.Trim(), Color = string.IsNullOrWhiteSpace(x.Color) ? "#6b7280" : x.Color! }).ToList() ?? [];
     private static WorkItemDto ToDto(WorkItem x) => new(x.Id, x.Key, x.Title, x.Description, x.Type.ToString().ToLowerInvariant(), x.Status.ToString().ToLowerInvariant(), x.Priority.ToString().ToLowerInvariant(), x.AssigneeId, x.ReporterId, x.ProjectId, x.SprintId, x.ParentId, x.Labels.Select(l => l.Name).ToList(), x.StoryPoints, x.DueDate, x.Created, x.lastModified, x.Comments.Count, x.Attachments.Count, x.Subtasks.Count, x.Subtasks.Count(s => s.Status == WorkItemStatus.Done));
 }
