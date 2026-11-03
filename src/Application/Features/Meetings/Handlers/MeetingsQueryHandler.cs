@@ -26,20 +26,10 @@ public async Task<IReadOnlyList<MeetingDto>> Handle(GetMeetingsQuery request, Ca
 public async Task<MeetingDto> Handle(GetMeetingByIdQuery request, CancellationToken ct)
         => ToDto(await Meetings.AsNoTracking().Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == request.Id, ct) ?? throw new NotFoundEntityException());
 
-private async Task ValidateProject(int? projectId, CancellationToken ct)
-    {
-        if (projectId.HasValue && !await unitOfWork.dbContext.Set<Project>().AnyAsync(x => x.Id == projectId, ct)) throw new BadRequestEntityException("پروژه انتخاب‌شده وجود ندارد.");
-    }
-
-    private static void ValidateTimes(DateTime startsAt, DateTime endsAt)
+private static void ValidateTimes(DateTime startsAt, DateTime endsAt)
     {
         if (endsAt <= startsAt) throw new BadRequestEntityException("زمان پایان جلسه باید بعد از زمان شروع باشد.");
     }
 
-    private static void SetParticipants(Meeting meeting, IReadOnlyList<string>? participantIds)
-    {
-        foreach (var userId in (participantIds ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct()) meeting.Participants.Add(new MeetingParticipant { UserId = userId });
-    }
-
-    private static MeetingDto ToDto(Meeting x) => new(x.Id, x.Title, x.Description, x.Location, x.MeetingUrl, x.StartsAt, x.EndsAt, x.Status.ToString().ToLowerInvariant(), x.OrganizerId, x.ProjectId, x.Participants.Select(p => p.UserId).ToList());
+private static MeetingDto ToDto(Meeting x) => new(x.Id, x.Title, x.Description, x.Location, x.MeetingUrl, x.StartsAt, x.EndsAt, x.Status.ToString().ToLowerInvariant(), x.OrganizerId, x.ProjectId, x.Participants.Select(p => p.UserId).ToList());
 }
