@@ -34,6 +34,7 @@ public class ApplicationDbContext : IdentityDbContext<User, Role, string, Identi
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<UserSubscription> UserSubscriptions => Set<UserSubscription>();
     public DbSet<WorkflowDefinitionRecord> WorkflowDefinitions => Set<WorkflowDefinitionRecord>();
+    public DbSet<WorkflowPublishedVersionRecord> WorkflowPublishedVersions => Set<WorkflowPublishedVersionRecord>();
     public DbSet<ProjectWorkflowBoardSetting> ProjectWorkflowBoardSettings => Set<ProjectWorkflowBoardSetting>();
     public DbSet<Team> Teams => Set<Team>();
     public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
