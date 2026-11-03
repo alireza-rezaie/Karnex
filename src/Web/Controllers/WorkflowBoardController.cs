@@ -87,6 +87,12 @@ public class WorkflowBoardController(ApplicationDbContext db) : ControllerBase
         if (item.IsSystem || !item.OwnerProjectId.HasValue || !await CanManage(item.OwnerProjectId.Value, ct)) return Forbid();
         var normalized = NormalizePayload(payload);
         if (!IsValidPayload(normalized)) return BadRequest(new { message = "وضعیت‌ها یا انتقال‌های گردش‌کار معتبر نیستند." });
+        // Backfill the previously active version for records created before immutable
+        // version snapshots were introduced.
+        if (item.Version > 0 && !item.PublishedVersions.Any(v => v.Version == item.Version))
+            item.PublishedVersions.Add(new WorkflowPublishedVersionRecord {
+                Version = item.Version, PayloadJson = item.PayloadJson, PublishedAt = item.Created
+            });
         var nextVersion = item.Version + 1;
         item.PayloadJson = normalized; item.Version = nextVersion; item.IsDraft = false; item.lastModified = DateTime.UtcNow;
         item.PublishedVersions.Add(new WorkflowPublishedVersionRecord {
