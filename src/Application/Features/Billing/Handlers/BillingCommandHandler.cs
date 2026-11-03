@@ -7,10 +7,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Billing;
 
-public sealed class BillingCommandHandler(IUnitOfWork unitOfWork, ICurrentUserService currentUser) : IRequestHandler<UpdatePlanCommand, PlanDto>, IRequestHandler<ChangeSubscriptionCommand, SubscriptionDto>, IRequestHandler<CancelSubscriptionCommand, SubscriptionDto>
+public sealed class BillingCommandHandler(IUnitOfWork unitOfWork, ICurrentUserService currentUser) : IRequestHandler<CreatePlanCommand, PlanDto>, IRequestHandler<UpdatePlanCommand, PlanDto>, IRequestHandler<ChangeSubscriptionCommand, SubscriptionDto>, IRequestHandler<CancelSubscriptionCommand, SubscriptionDto>
 {
 private DbSet<Plan> Plans => unitOfWork.dbContext.Set<Plan>();
     private DbSet<UserSubscription> Subscriptions => unitOfWork.dbContext.Set<UserSubscription>();
+public async Task<PlanDto> Handle(CreatePlanCommand r, CancellationToken ct)
+    {
+        Validate(r.Name, r.PriceMonthly, r.PriceYearly, r.Users, r.Storage);
+        if (await Plans.AnyAsync(x => x.Name == r.Name.Trim(), ct)) throw new BadRequestEntityException("پلنی با این نام وجود دارد.");
+        var plan = new Plan { Name = r.Name.Trim(), Description = r.Description?.Trim() ?? "", PriceMonthly = r.PriceMonthly, PriceYearly = r.PriceYearly, Users = r.Users, FeaturesJson = JsonSerializer.Serialize(r.Features ?? []), Highlighted = r.Highlighted, Storage = r.Storage.Trim(), Active = r.Active, DisplayOrder = (await Plans.MaxAsync(x => (int?)x.DisplayOrder, ct) ?? 0) + 1 };
+        await unitOfWork.Repository<Plan>().AddAsync(plan, ct); await unitOfWork.Save(ct); return ToDto(plan);
+    }
+
 public async Task<PlanDto> Handle(UpdatePlanCommand r, CancellationToken ct)
     {
         Validate(r.Name, r.PriceMonthly, r.PriceYearly, r.Users, r.Storage);
