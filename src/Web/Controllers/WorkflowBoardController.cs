@@ -23,7 +23,7 @@ public class WorkflowBoardController(ApplicationDbContext db) : ControllerBase
         var items = await db.WorkflowDefinitions.AsNoTracking()
             .Include(x => x.PublishedVersions).OrderBy(x => x.Name).ToListAsync(ct);
         var projectIds = items.Where(x => x.OwnerProjectId.HasValue).Select(x => x.OwnerProjectId!.Value).Distinct().ToArray();
-        var accessible = await ManagedProjectIds(projectIds, ct);
+        var accessible = await MemberProjectIds(projectIds, ct);
         return Ok(items.Where(x => x.IsSystem || !x.OwnerProjectId.HasValue || accessible.Contains(x.OwnerProjectId.Value)).Select(ToDto));
     }
 
@@ -33,7 +33,7 @@ public class WorkflowBoardController(ApplicationDbContext db) : ControllerBase
         var item = await db.WorkflowDefinitions.Include(x => x.PublishedVersions)
             .FirstOrDefaultAsync(x => x.Id == id, ct);
         if (item is null) return NotFound();
-        if (!item.IsSystem && item.OwnerProjectId.HasValue && !await CanManage(item.OwnerProjectId.Value, ct)) return Forbid();
+        if (!item.IsSystem && item.OwnerProjectId.HasValue && !await IsProjectMember(item.OwnerProjectId.Value, ct)) return Forbid();
         return Ok(ToDto(item));
     }
 
@@ -154,6 +154,13 @@ public class WorkflowBoardController(ApplicationDbContext db) : ControllerBase
         if (string.IsNullOrWhiteSpace(CurrentUserId)) return false;
         return await db.ProjectMembers.AnyAsync(x => x.ProjectId == projectId && x.UserId == CurrentUserId &&
             (x.Role.ToLower() == "pm" || x.Role.ToLower() == "sm" || x.Role.ToLower() == "project manager" || x.Role.ToLower() == "scrum master"), ct);
+    }
+
+    private async Task<HashSet<int>> MemberProjectIds(int[] ids, CancellationToken ct)
+    {
+        if (ids.Length == 0 || string.IsNullOrWhiteSpace(CurrentUserId)) return [];
+        return (await db.ProjectMembers.Where(x => ids.Contains(x.ProjectId) && x.UserId == CurrentUserId)
+            .Select(x => x.ProjectId).ToListAsync(ct)).ToHashSet();
     }
 
     private async Task<HashSet<int>> ManagedProjectIds(int[] ids, CancellationToken ct)
