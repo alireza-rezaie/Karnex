@@ -187,7 +187,7 @@ public class WorkflowBoardController(ApplicationDbContext db) : ControllerBase
     }
 
     private static object ToDto(WorkflowDefinitionRecord x) => new {
-        id = x.IsSystem ? "workflow-default" : $"workflow-{x.Id}", name = x.Name, description = x.Description,
+        id = x.IsSystem ? "workflow-default" : $"workflow-{x.Id}", recordId = x.Id, name = x.Name, description = x.Description,
         ownerProjectId = x.OwnerProjectId?.ToString(), isSystem = x.IsSystem, isDraft = x.IsDraft,
         version = x.Version, publishedVersionId = x.Version > 0 ? $"workflow-{x.Id}-version-{x.Version}" : null,
         payload = JsonDocument.Parse(x.PayloadJson).RootElement,
