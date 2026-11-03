@@ -71,7 +71,7 @@ public class WorkItemHandler(IUnitOfWork unitOfWork, ICurrentUserService current
     }
     public async Task<WorkItemDto> Handle(UpdateWorkItemCommand r, CancellationToken ct)
     {
-        var item = await AccessibleItems(Items).FirstOrDefaultAsync(x => x.Id == r.Id, ct) ?? throw new NotFoundEntityException();
+        var item = await Detail(AccessibleItems(Items)).FirstOrDefaultAsync(x => x.Id == r.Id, ct) ?? throw new NotFoundEntityException();
         if (r.SprintId.HasValue && !await unitOfWork.dbContext.Set<Sprint>().AnyAsync(x => x.Id == r.SprintId && x.ProjectId == item.ProjectId, ct)) throw new BadRequestEntityException("اسپرینت نامعتبر است.");
         if (r.ParentId == r.Id) throw new BadRequestEntityException("تسک نمی‌تواند والد خودش باشد.");
         item.Title = r.Title.Trim(); item.Description = r.Description?.Trim() ?? string.Empty; item.Type = r.Type; item.Priority = r.Priority; item.AssigneeId = r.AssigneeId; item.SprintId = r.SprintId; item.ParentId = r.ParentId; item.StoryPoints = r.StoryPoints; item.DueDate = r.DueDate; item.lastModified = DateTime.UtcNow;
@@ -79,7 +79,7 @@ public class WorkItemHandler(IUnitOfWork unitOfWork, ICurrentUserService current
     }
     public async Task<WorkItemDto> Handle(ChangeWorkItemStatusCommand r, CancellationToken ct)
     {
-        var item = await AccessibleItems(Items).FirstOrDefaultAsync(x => x.Id == r.Id, ct) ?? throw new NotFoundEntityException(); item.Status = r.Status; item.CompletedAt = r.Status == WorkItemStatus.Done ? DateTime.UtcNow : null; item.lastModified = DateTime.UtcNow; await unitOfWork.Save(ct); return ToDto(item);
+        var item = await Detail(AccessibleItems(Items)).FirstOrDefaultAsync(x => x.Id == r.Id, ct) ?? throw new NotFoundEntityException(); item.Status = r.Status; item.CompletedAt = r.Status == WorkItemStatus.Done ? DateTime.UtcNow : null; item.lastModified = DateTime.UtcNow; await unitOfWork.Save(ct); return ToDto(item);
     }
     public async Task<bool> Handle(DeleteWorkItemCommand r, CancellationToken ct) { var item = await AccessibleItems(Items).FirstOrDefaultAsync(x => x.Id == r.Id, ct) ?? throw new NotFoundEntityException(); item.IsDelete = true; item.lastModified = DateTime.UtcNow; await unitOfWork.Save(ct); return true; }
     public async Task<bool> Handle(AddWorkItemCommentCommand r, CancellationToken ct) { var userId = currentUserService.UserId; if (userId == null || !await AccessibleItems(Items).AnyAsync(x => x.Id == r.Id, ct)) throw new NotFoundEntityException(); await unitOfWork.Repository<WorkItemComment>().AddAsync(new() { WorkItemId = r.Id, AuthorId = userId, Content = r.Content.Trim(), CreatedBy = userId }, ct); await unitOfWork.Save(ct); return true; }
