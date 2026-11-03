@@ -73,8 +73,10 @@ public class WorkflowBoardController(ApplicationDbContext db) : ControllerBase
         var item = await db.WorkflowDefinitions.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (item is null) return NotFound();
         if (item.IsSystem || !item.OwnerProjectId.HasValue || !await CanManage(item.OwnerProjectId.Value, ct)) return Forbid();
+        var normalized = NormalizePayload(request.Payload);
+        if (!IsValidPayload(normalized)) return BadRequest(new { message = "برای ذخیرهٔ پیش‌نویس حداقل یک وضعیت معتبر لازم است و انتقال‌ها باید به وضعیت‌های موجود متصل باشند." });
         if (!string.IsNullOrWhiteSpace(request.Name)) item.Name = request.Name.Trim();
-        item.Description = request.Description?.Trim(); item.PayloadJson = NormalizePayload(request.Payload);
+        item.Description = request.Description?.Trim(); item.PayloadJson = normalized;
         item.IsDraft = true; item.lastModified = DateTime.UtcNow;
         await db.SaveChangesAsync(ct); return Ok(ToDto(item));
     }
