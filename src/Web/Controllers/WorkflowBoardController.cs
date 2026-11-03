@@ -114,8 +114,10 @@ public class WorkflowBoardController(ApplicationDbContext db) : ControllerBase
     {
         if (!await IsProjectMember(projectId, ct)) return Forbid();
         var setting = await db.ProjectWorkflowBoardSettings.AsNoTracking().FirstOrDefaultAsync(x => x.ProjectId == projectId, ct);
-        return Ok(setting is null ? new { projectId, workflowId = (int?)null, kanbanBacklogEnabled = true, columns = JsonDocument.Parse("[]").RootElement }
-            : ToSettingDto(setting));
+        object response = setting is null
+            ? new { projectId, workflowId = (int?)null, kanbanBacklogEnabled = true, columns = JsonDocument.Parse("[]").RootElement }
+            : ToSettingDto(setting);
+        return Ok(response);
     }
 
     [HttpPut("projects/{projectId:int}/board")]
