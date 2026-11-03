@@ -81,7 +81,11 @@ static class ConfigureService
         try
         {
             await context.Database.MigrateAsync();
-            await GenerateFakeData.SeedDataAsync(context, loggerFactory);
+
+            // Demo accounts and sample records must never be inserted into production.
+            // Schema migrations remain enabled for every environment.
+            if (app.Environment.IsDevelopment())
+                await GenerateFakeData.SeedDataAsync(context, loggerFactory);
         }
         catch (Exception e)
         {
