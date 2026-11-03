@@ -18,7 +18,6 @@ public async Task<SubscriptionDto?> Handle(GetCurrentSubscriptionQuery r, Cancel
     { var item = await Subscriptions.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == RequireUser(), ct); return item is null ? null : ToDto(item); }
 
 private string RequireUser() => !string.IsNullOrWhiteSpace(currentUser.UserId) ? currentUser.UserId : throw new BadRequestEntityException("ورود کاربر الزامی است.");
-    private static void Validate(string name, decimal monthly, decimal yearly, int users, string storage) { if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(storage) || monthly < 0 || yearly < 0 || users < -1) throw new BadRequestEntityException("مشخصات پلن نامعتبر است."); }
     private static PlanDto ToDto(Plan x) => new(x.Id, x.Name, x.Description, x.PriceMonthly, x.PriceYearly, x.Users, JsonSerializer.Deserialize<List<string>>(x.FeaturesJson) ?? [], x.Highlighted, x.Storage, x.Active, x.DisplayOrder);
     private static SubscriptionDto ToDto(UserSubscription x) => new(x.Id, x.PlanId, x.Status, x.PeriodStart, x.PeriodEnd, x.CancelAtPeriodEnd);
 }
