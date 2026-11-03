@@ -8,9 +8,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Application.Features.Reminders;
 
-public sealed class ReminderCommandHandler(IUnitOfWork unitOfWork) : IRequestHandler<UpdateReminderCommand, ReminderDto>, IRequestHandler<CompleteReminderCommand, ReminderDto>, IRequestHandler<DeleteReminderCommand, bool>
+public sealed class ReminderCommandHandler(IUnitOfWork unitOfWork) : IRequestHandler<CreateReminderCommand, ReminderDto>, IRequestHandler<UpdateReminderCommand, ReminderDto>, IRequestHandler<CompleteReminderCommand, ReminderDto>, IRequestHandler<DeleteReminderCommand, bool>
 {
 private DbSet<Reminder> Reminders => unitOfWork.dbContext.Set<Reminder>();
+public async Task<ReminderDto> Handle(CreateReminderCommand request, CancellationToken cancellationToken)
+    {
+        await ValidateReferences(request.ProjectId, request.WorkItemId, cancellationToken);
+        var reminder = new Reminder { Title = request.Title.Trim(), Description = request.Description?.Trim(), ReminderAt = request.ReminderAt, Priority = request.Priority, UserId = request.UserId, ProjectId = request.ProjectId, WorkItemId = request.WorkItemId, CreatedBy = request.UserId ?? string.Empty };
+        await unitOfWork.Repository<Reminder>().AddAsync(reminder, cancellationToken);
+        await unitOfWork.Save(cancellationToken);
+        return ToDto(reminder);
+    }
+
 public async Task<ReminderDto> Handle(UpdateReminderCommand request, CancellationToken cancellationToken)
     {
         var reminder = await Reminders.FirstOrDefaultAsync(x => x.Id == request.Id, cancellationToken) ?? throw new NotFoundEntityException();
