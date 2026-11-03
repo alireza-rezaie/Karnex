@@ -1,294 +1,600 @@
-﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Infrastructure.Persistence.Context;
+using System.Text.Json;
+using Domain.Entities.Billing;
+using Domain.Entities.Identity;
 using Domain.Entities.ProjectManagement;
 using Domain.Enums;
-using Domain.Entities.Identity;
-using Domain.Entities.Billing;
+using Infrastructure.Persistence.Context;
 using Microsoft.AspNetCore.Identity;
-using System.Text.Json;
-
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Infrastructure.Persistence.SeedData;
 
-public class GenerateFakeData
-    {
-        public static async Task SeedDataAsync(ApplicationDbContext context,ILoggerFactory loggerFactory) 
-        {
-			try
-			{
-            await SeedIdentityAsync(context);
-            await SeedProjectManagementAsync(context);
-            await SeedBillingAsync(context);
-            await SeedSupplementalDataAsync(context);
-                 
+/// <summary>
+/// Deterministic, idempotent development data for every application-owned table.
+/// This seeder never deletes or overwrites user-created records.
+/// </summary>
+public static class GenerateFakeData
+{
+    private const string SeedTag = "karnex-dev-seed";
+    private const string AdminId = "seed-admin";
+    private const string DeveloperId = "seed-developer";
+    private const string DesignerId = "seed-designer";
+    private const string QaId = "seed-qa";
 
+    public static async Task SeedDataAsync(ApplicationDbContext context, ILoggerFactory loggerFactory)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var logger = loggerFactory.CreateLogger("Karnex.SeedData");
+
+        try
+        {
+            // Each phase saves its own parents before creating dependent rows.
+            // Re-running this method is safe: natural keys and unique indexes are checked.
+            var users = await SeedIdentityAsync(context);
+            var plans = await SeedBillingAsync(context, users);
+            var projects = await SeedProjectsAsync(context, users);
+            var sprints = await SeedSprintsAsync(context, projects);
+            var workItems = await SeedWorkItemsAsync(context, projects, sprints, users);
+            await SeedWorkItemChildrenAsync(context, workItems, users);
+            await SeedTeamsAsync(context, users);
+            await SeedProjectRolesAsync(context, projects);
+            var workflowId = await SeedWorkflowAsync(context);
+            await SeedBoardSettingsAsync(context, projects, workflowId);
+            await SeedMeetingsAsync(context, projects, users);
+            await SeedRemindersAsync(context, projects, workItems, users);
+            await SeedNotificationsAsync(context, users);
+            await SeedSubscriptionsAsync(context, plans, users);
+
+            logger.LogInformation(
+                "Karnex development seed completed. Users={Users}, Plans={Plans}, Projects={Projects}, Sprints={Sprints}, WorkItems={WorkItems}, Teams={Teams}, Meetings={Meetings}, Reminders={Reminders}, Notifications={Notifications}",
+                await context.User.CountAsync(), await context.Plans.CountAsync(),
+                await context.Projects.CountAsync(), await context.Sprints.CountAsync(),
+                await context.WorkItems.CountAsync(), await context.Teams.CountAsync(),
+                await context.Meetings.CountAsync(), await context.Reminders.CountAsync(),
+                await context.UserNotifications.CountAsync());
         }
-			catch (Exception e)
-			{
-				var logger = loggerFactory.CreateLogger<GenerateFakeData>();
-                logger.LogError(e,"Error In Seed Data");
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Karnex development seed failed.");
+            throw;
+        }
+    }
+
+    private static async Task<Dictionary<string, User>> SeedIdentityAsync(ApplicationDbContext db)
+    {
+        var roleDefinitions = new[]
+        {
+            (Name: "Admin", Id: "seed-role-admin"),
+            (Name: "User", Id: "seed-role-user")
+        };
+
+        var roles = new Dictionary<string, Role>(StringComparer.OrdinalIgnoreCase);
+        foreach (var definition in roleDefinitions)
+        {
+            var role = await db.Role.SingleOrDefaultAsync(x => x.Name == definition.Name);
+            if (role is null)
+            {
+                role = new Role
+                {
+                    Id = definition.Id,
+                    Name = definition.Name,
+                    NormalizedName = definition.Name.ToUpperInvariant(),
+                    ConcurrencyStamp = Guid.NewGuid().ToString("N")
+                };
+                db.Role.Add(role);
+                await db.SaveChangesAsync();
+            }
+            roles[definition.Name] = role;
+        }
+
+        var password = Environment.GetEnvironmentVariable("KARNEX_SEED_PASSWORD");
+        if (string.IsNullOrWhiteSpace(password))
+            password = "Karnex.Dev!2026";
+
+        var definitions = new[]
+        {
+            new SeedUser(AdminId, "مدیر سیستم کارنکس", "09120000001", "admin@karnex.local", "Admin"),
+            new SeedUser(DeveloperId, "علی توسعه‌دهنده", "09120000002", "developer@karnex.local", "User"),
+            new SeedUser(DesignerId, "سارا طراح محصول", "09120000003", "designer@karnex.local", "User"),
+            new SeedUser(QaId, "محمد کارشناس کیفیت", "09120000004", "qa@karnex.local", "User")
+        };
+
+        var hasher = new PasswordHasher<User>();
+        var result = new Dictionary<string, User>();
+        foreach (var definition in definitions)
+        {
+            var user = await db.User.SingleOrDefaultAsync(x => x.Id == definition.Id)
+                ?? await db.User.SingleOrDefaultAsync(x => x.PhoneNumber == definition.Phone)
+                ?? await db.User.SingleOrDefaultAsync(x => x.Email == definition.Email);
+
+            if (user is null)
+            {
+                user = new User
+                {
+                    Id = definition.Id,
+                    UserName = definition.Phone,
+                    NormalizedUserName = definition.Phone,
+                    PhoneNumber = definition.Phone,
+                    PhoneNumberConfirmed = true,
+                    Email = definition.Email,
+                    NormalizedEmail = definition.Email.ToUpperInvariant(),
+                    EmailConfirmed = true,
+                    DisplayName = definition.DisplayName,
+                    SecurityStamp = Guid.NewGuid().ToString("N"),
+                    ConcurrencyStamp = Guid.NewGuid().ToString("N"),
+                    LockoutEnabled = true
+                };
+                user.PasswordHash = hasher.HashPassword(user, password);
+                db.User.Add(user);
+                await db.SaveChangesAsync();
+            }
+            else if (string.IsNullOrWhiteSpace(user.DisplayName))
+            {
+                user.DisplayName = definition.DisplayName;
+                await db.SaveChangesAsync();
+            }
+
+            var role = roles[definition.Role];
+            var hasRole = await db.UserRole.AnyAsync(x => x.UserId == user.Id && x.RoleId == role.Id);
+            if (!hasRole)
+            {
+                db.UserRole.Add(new UserRole(role.Id, user.Id));
+                await db.SaveChangesAsync();
+            }
+            result[definition.Key] = user;
+
+            // Seed one address per account without touching existing addresses.
+            if (!await db.Address.AnyAsync(x => x.UserId == user.Id))
+            {
+                db.Address.Add(new Address
+                {
+                    UserId = user.Id,
+                    IsMain = true,
+                    State = "تهران",
+                    City = "تهران",
+                    FirstName = definition.DisplayName.Split(' ')[0],
+                    LastName = definition.DisplayName.Split(' ').Last(),
+                    FullAddress = "خیابان نمونه، پلاک ۱۲، واحد ۳",
+                    Number = "02100000000",
+                    PostalCode = "1234567890"
+                });
+                await db.SaveChangesAsync();
             }
         }
 
-    private static async Task SeedProjectManagementAsync(ApplicationDbContext context)
-    {
-        if (await context.Projects.AnyAsync())
-        {
-            await SeedRemindersAsync(context);
-            await SeedMeetingsAsync(context);
-            return;
-        }
-
-        var now = DateTime.UtcNow;
-        var webProject = new Project
-        {
-            Key = "WEB",
-            Name = "بازطراحی وب‌سایت",
-            Description = "بازطراحی تجربه کاربری و اتصال صفحات اصلی وب‌سایت به API.",
-            Type = ProjectType.Scrum,
-            Status = ProjectStatus.Active,
-            Privacy = ProjectPrivacy.Private,
-            Icon = "globe",
-            Color = "#3b82f6",
-            StartDate = now.AddDays(-21),
-            EndDate = now.AddDays(45),
-            CreatedBy = "seed-admin"
-        };
-        webProject.Members.Add(new ProjectMember { UserId = "seed-admin", Role = "pm" });
-        webProject.Members.Add(new ProjectMember { UserId = "seed-developer", Role = "Developer" });
-
-        var webSprint = new Sprint
-        {
-            Name = "اسپرینت اول - احراز هویت",
-            Goal = "تکمیل صفحات ورود و اتصال به API احراز هویت.",
-            Status = SprintStatus.Active,
-            StartDate = now.AddDays(-5),
-            EndDate = now.AddDays(9),
-            CreatedBy = "seed-admin"
-        };
-        webProject.Sprints.Add(webSprint);
-
-        var authEpic = new WorkItem
-        {
-            Key = "WEB-1", Title = "احراز هویت کاربران", Description = "Epic مربوط به ورود، ثبت‌نام و بازیابی رمز عبور.",
-            Type = WorkItemType.Epic, Status = WorkItemStatus.InProgress, Priority = WorkItemPriority.High,
-            ReporterId = "seed-admin", AssigneeId = "seed-developer", Sprint = webSprint, StoryPoints = 13,
-            DueDate = now.AddDays(7), CreatedBy = "seed-admin"
-        };
-        var loginTask = new WorkItem
-        {
-            Key = "WEB-2", Title = "اتصال فرم ورود به API", Description = "ارسال اطلاعات فرم ورود و مدیریت پاسخ سرویس.",
-            Type = WorkItemType.Task, Status = WorkItemStatus.InProgress, Priority = WorkItemPriority.Highest,
-            ReporterId = "seed-admin", AssigneeId = "seed-developer", Sprint = webSprint, Parent = authEpic,
-            StoryPoints = 5, DueDate = now.AddDays(2), CreatedBy = "seed-admin"
-        };
-        loginTask.Labels.Add(new WorkItemLabel { Name = "API", Color = "#3b82f6" });
-        loginTask.Labels.Add(new WorkItemLabel { Name = "Auth", Color = "#8b5cf6" });
-        loginTask.Comments.Add(new WorkItemComment { AuthorId = "seed-admin", Content = "لطفاً مدیریت خطاهای اعتبارسنجی نیز انجام شود.", CreatedBy = "seed-admin" });
-        loginTask.Attachments.Add(new WorkItemAttachment { FileName = "login-flow.pdf", FileUrl = "/seed-files/login-flow.pdf", ContentType = "application/pdf", Size = 245760, CreatedBy = "seed-admin" });
-        var registerTask = new WorkItem
-        {
-            Key = "WEB-3", Title = "طراحی صفحه ثبت‌نام", Description = "طراحی واکنش‌گرا برای صفحه ثبت‌نام.",
-            Type = WorkItemType.Task, Status = WorkItemStatus.Done, Priority = WorkItemPriority.Medium,
-            ReporterId = "seed-admin", AssigneeId = "seed-developer", Sprint = webSprint, Parent = authEpic,
-            StoryPoints = 3, DueDate = now.AddDays(-2), CompletedAt = now.AddDays(-1), CreatedBy = "seed-admin"
-        };
-        registerTask.Labels.Add(new WorkItemLabel { Name = "UI", Color = "#22c55e" });
-        var searchBug = new WorkItem
-        {
-            Key = "WEB-4", Title = "رفع باگ جستجو", Description = "نتایج جستجو در صفحه موبایل نمایش داده نمی‌شوند.",
-            Type = WorkItemType.Bug, Status = WorkItemStatus.Todo, Priority = WorkItemPriority.High,
-            ReporterId = "seed-admin", AssigneeId = "seed-developer", StoryPoints = 2,
-            DueDate = now.AddDays(-1), CreatedBy = "seed-admin"
-        };
-        searchBug.Labels.Add(new WorkItemLabel { Name = "Bug", Color = "#ef4444" });
-        webProject.WorkItems.Add(authEpic);
-        webProject.WorkItems.Add(loginTask);
-        webProject.WorkItems.Add(registerTask);
-        webProject.WorkItems.Add(searchBug);
-
-        var mobileProject = new Project
-        {
-            Key = "APP", Name = "اپلیکیشن موبایل", Description = "توسعه اپلیکیشن Android و iOS برای مشتریان.",
-            Type = ProjectType.Scrum, Status = ProjectStatus.Active, Privacy = ProjectPrivacy.Private,
-            Icon = "smartphone", Color = "#f97316", StartDate = now.AddDays(-15), EndDate = now.AddDays(60), CreatedBy = "seed-admin"
-        };
-        mobileProject.Members.Add(new ProjectMember { UserId = "seed-mobile", Role = "Developer" });
-        var mobileSprint = new Sprint { Name = "اسپرینت API", Goal = "اتصال قابلیت‌های اصلی به API.", Status = SprintStatus.Active, StartDate = now.AddDays(-2), EndDate = now.AddDays(12), CreatedBy = "seed-admin" };
-        mobileProject.Sprints.Add(mobileSprint);
-        mobileProject.WorkItems.Add(new WorkItem { Key = "APP-1", Title = "پیاده‌سازی API محصولات", Description = "اتصال فهرست محصولات اپلیکیشن به API.", Type = WorkItemType.Story, Status = WorkItemStatus.InProgress, Priority = WorkItemPriority.High, AssigneeId = "seed-mobile", ReporterId = "seed-admin", Sprint = mobileSprint, StoryPoints = 8, DueDate = now.AddDays(5), CreatedBy = "seed-admin" });
-        mobileProject.WorkItems.Add(new WorkItem { Key = "APP-2", Title = "تست واحد سفارش‌ها", Description = "افزودن تست برای جریان ثبت سفارش.", Type = WorkItemType.Task, Status = WorkItemStatus.Todo, Priority = WorkItemPriority.Medium, AssigneeId = "seed-mobile", ReporterId = "seed-admin", Sprint = mobileSprint, StoryPoints = 5, DueDate = now.AddDays(8), CreatedBy = "seed-admin" });
-
-        var crmProject = new Project
-        {
-            Key = "CRM", Name = "سیستم مدیریت مشتریان", Description = "مدیریت مشتریان و مخاطبان تیم فروش.",
-            Type = ProjectType.Kanban, Status = ProjectStatus.Active, Privacy = ProjectPrivacy.Public,
-            Icon = "users", Color = "#22c55e", StartDate = now.AddDays(-10), EndDate = now.AddDays(90), CreatedBy = "seed-admin"
-        };
-        crmProject.WorkItems.Add(new WorkItem { Key = "CRM-1", Title = "طراحی فرم ثبت مشتری", Description = "فرم جامع ثبت اطلاعات مشتری.", Type = WorkItemType.Task, Status = WorkItemStatus.Done, Priority = WorkItemPriority.High, ReporterId = "seed-admin", StoryPoints = 5, CompletedAt = now.AddDays(-2), CreatedBy = "seed-admin" });
-        crmProject.WorkItems.Add(new WorkItem { Key = "CRM-2", Title = "ساخت API مخاطبین", Description = "CRUD مخاطبین همراه با اعتبارسنجی.", Type = WorkItemType.Task, Status = WorkItemStatus.Review, Priority = WorkItemPriority.High, ReporterId = "seed-admin", StoryPoints = 8, DueDate = now.AddDays(4), CreatedBy = "seed-admin" });
-
-        await context.Projects.AddRangeAsync(webProject, mobileProject, crmProject);
-        await context.SaveChangesAsync();
-
-        await SeedRemindersAsync(context);
-        await SeedMeetingsAsync(context);
+        return result;
     }
 
-    private static async Task SeedIdentityAsync(ApplicationDbContext context)
+    private static async Task<Dictionary<string, Plan>> SeedBillingAsync(ApplicationDbContext db, IReadOnlyDictionary<string, User> users)
     {
-        var roles = new[] { (Id: "seed-role-admin", Name: "Admin"), (Id: "seed-role-user", Name: "User") };
-        foreach (var role in roles)
-            if (!await context.Role.AnyAsync(x => x.Name == role.Name))
-                await context.Role.AddAsync(new Role { Id = role.Id, Name = role.Name, NormalizedName = role.Name.ToUpperInvariant(), ConcurrencyStamp = Guid.NewGuid().ToString() });
-
-        var users = new[] {
-            (Id: "seed-admin", Name: "مدیر کارنکس", Phone: "09120000001", Email: "admin@karnex.local", RoleId: "seed-role-admin"),
-            (Id: "seed-developer", Name: "علی توسعه‌دهنده", Phone: "09120000002", Email: "developer@karnex.local", RoleId: "seed-role-user"),
-            (Id: "seed-mobile", Name: "سارا موبایل", Phone: "09120000003", Email: "mobile@karnex.local", RoleId: "seed-role-user")
+        var definitions = new[]
+        {
+            new PlanSeed("free", "رایگان", "برای آشنایی و تیم‌های کوچک", 0, 0, 3, "2 GB", new[] { "پروژه‌های پایه", "برد کانبان", "گزارش‌های پایه" }, 1, false),
+            new PlanSeed("pro", "حرفه‌ای", "برای تیم‌های در حال رشد", 590000, 5900000, 20, "25 GB", new[] { "پروژه نامحدود", "اسپرینت", "گزارش پیشرفته", "گردش‌کار سفارشی" }, 2, true),
+            new PlanSeed("business", "سازمانی", "برای سازمان‌های چندتیمی", 1990000, 19900000, -1, "250 GB", new[] { "کاربر نامحدود", "مدیریت تیم", "گزارش سازمانی", "پشتیبانی اولویت‌دار" }, 3, false)
         };
-        var hasher = new PasswordHasher<User>();
-        foreach (var item in users)
+
+        var result = new Dictionary<string, Plan>();
+        foreach (var definition in definitions)
         {
-            if (await context.User.AnyAsync(x => x.Id == item.Id || x.PhoneNumber == item.Phone)) continue;
-            var user = new User { Id = item.Id, DisplayName = item.Name, UserName = item.Phone, NormalizedUserName = item.Phone, PhoneNumber = item.Phone, PhoneNumberConfirmed = true, Email = item.Email, NormalizedEmail = item.Email.ToUpperInvariant(), EmailConfirmed = true, SecurityStamp = Guid.NewGuid().ToString(), ConcurrencyStamp = Guid.NewGuid().ToString() };
-            user.PasswordHash = hasher.HashPassword(user, "Karnex!123");
-            await context.User.AddAsync(user);
-            await context.UserRole.AddAsync(new UserRole(item.RoleId, item.Id));
-        }
-        await context.SaveChangesAsync();
-    }
-
-    private static async Task SeedBillingAsync(ApplicationDbContext context)
-    {
-        if (!await context.Plans.AnyAsync())
-        {
-            await context.Plans.AddRangeAsync(
-                new Plan { Name = "رایگان", Description = "برای شروع تیم‌های کوچک", PriceMonthly = 0, PriceYearly = 0, Users = 3, Storage = "1 GB", FeaturesJson = JsonSerializer.Serialize(new[] { "پروژه‌های پایه", "برد کانبان" }), DisplayOrder = 1, Active = true },
-                new Plan { Name = "حرفه‌ای", Description = "برای تیم‌های در حال رشد", PriceMonthly = 590000, PriceYearly = 5900000, Users = 20, Storage = "25 GB", FeaturesJson = JsonSerializer.Serialize(new[] { "اسپرینت", "گزارش‌ها", "دسترسی‌های پیشرفته" }), DisplayOrder = 2, Highlighted = true, Active = true },
-                new Plan { Name = "سازمانی", Description = "برای سازمان‌های بزرگ", PriceMonthly = 1990000, PriceYearly = 19900000, Users = -1, Storage = "250 GB", FeaturesJson = JsonSerializer.Serialize(new[] { "کاربر نامحدود", "گزارش سازمانی", "پشتیبانی ویژه" }), DisplayOrder = 3, Active = true });
-            await context.SaveChangesAsync();
-        }
-        if (!await context.UserSubscriptions.AnyAsync(x => x.UserId == "seed-admin"))
-        {
-            var plan = await context.Plans.OrderByDescending(x => x.DisplayOrder).FirstAsync();
-            await context.UserSubscriptions.AddAsync(new UserSubscription { UserId = "seed-admin", PlanId = plan.Id, Status = "active", PeriodStart = DateTime.UtcNow.AddDays(-10), PeriodEnd = DateTime.UtcNow.AddDays(20), CreatedBy = "seed-admin" });
-            await context.SaveChangesAsync();
-        }
-    }
-
-    private static async Task SeedRemindersAsync(ApplicationDbContext context)
-    {
-        if (await context.Reminders.AnyAsync()) return;
-
-        var project = await context.Projects.OrderBy(x => x.Id).FirstOrDefaultAsync();
-        if (project is null) return;
-
-        var workItem = await context.WorkItems
-            .Where(x => x.ProjectId == project.Id)
-            .OrderBy(x => x.Id)
-            .FirstOrDefaultAsync();
-        var now = DateTime.UtcNow;
-
-        await context.Reminders.AddRangeAsync(
-            new Reminder { Title = "تکمیل اتصال فرم ورود", Description = "بررسی پاسخ‌های خطای API احراز هویت.", ReminderAt = now.AddHours(2), Priority = WorkItemPriority.High, UserId = "seed-admin", ProjectId = project.Id, WorkItemId = workItem?.Id, CreatedBy = "seed-admin" },
-            new Reminder { Title = "جلسه بررسی اسپرینت", Description = "مرور وضعیت کارهای اسپرینت فعال.", ReminderAt = now.AddHours(5), Priority = WorkItemPriority.Medium, UserId = "seed-admin", ProjectId = project.Id, CreatedBy = "seed-admin" },
-            new Reminder { Title = "بازبینی وظایف پروژه", Description = "وضعیت وظایف نزدیک به موعد را بررسی کنید.", ReminderAt = now.AddDays(1).AddHours(9), Priority = WorkItemPriority.Low, UserId = "seed-admin", ProjectId = project.Id, CreatedBy = "seed-admin" });
-        await context.SaveChangesAsync();
-    }
-
-    private static async Task SeedMeetingsAsync(ApplicationDbContext context)
-    {
-        if (await context.Meetings.AnyAsync()) return;
-
-        var project = await context.Projects.OrderBy(x => x.Id).FirstOrDefaultAsync();
-        if (project is null) return;
-
-        var today = DateTime.UtcNow.Date;
-        await context.Meetings.AddRangeAsync(
-            new Meeting
+            var plan = await db.Plans.SingleOrDefaultAsync(x => x.Name == definition.Name);
+            if (plan is null)
             {
-                Title = "جلسه روزانه اسکرام", Description = "مرور کارهای انجام‌شده، برنامه امروز و موانع تیم.", Location = "اتاق جلسه آنلاین", MeetingUrl = "https://meet.google.com/", StartsAt = today.AddHours(9), EndsAt = today.AddHours(9.5), OrganizerId = "seed-admin", ProjectId = project.Id, CreatedBy = "seed-admin",
-                Participants = { new MeetingParticipant { UserId = "seed-admin" }, new MeetingParticipant { UserId = "seed-developer" } }
-            },
-            new Meeting
-            {
-                Title = "بازبینی کد", Description = "بررسی Pull Requestهای آماده برای انتشار.", Location = "Google Meet", MeetingUrl = "https://meet.google.com/", StartsAt = today.AddHours(14), EndsAt = today.AddHours(15), OrganizerId = "seed-admin", ProjectId = project.Id, CreatedBy = "seed-admin",
-                Participants = { new MeetingParticipant { UserId = "seed-admin" }, new MeetingParticipant { UserId = "seed-developer" } }
-            },
-            new Meeting
-            {
-                Title = "ارائه به مشتری", Description = "نمایش نسخه جدید و دریافت بازخورد مشتری.", Location = "اتاق کنفرانس", StartsAt = today.AddHours(16.5), EndsAt = today.AddHours(17.5), OrganizerId = "seed-admin", ProjectId = project.Id, CreatedBy = "seed-admin",
-                Participants = { new MeetingParticipant { UserId = "seed-admin" } }
-            });
-        await context.SaveChangesAsync();
-    }
-
-    // Keeps development databases useful even after the initial seed has run.
-    // Every generated key/name is deterministic, so restarting the API never duplicates data.
-    private static async Task SeedSupplementalDataAsync(ApplicationDbContext context)
-    {
-        var project = await context.Projects.OrderBy(x => x.Id).FirstOrDefaultAsync();
-        if (project is null) return;
-        var now = DateTime.UtcNow;
-        var users = (await context.User.OrderBy(x => x.Id).Select(x => x.Id).ToListAsync()).DefaultIfEmpty("seed-admin").ToList();
-        var reminderTitles = new[] { "تأیید طراحی صفحه ورود", "ارسال نسخه آزمایشی به QA", "پیگیری بازخورد مشتری", "آماده‌سازی جلسه برنامه‌ریزی", "بررسی خطاهای Sentry", "مرور Pull Requestهای باز", "به‌روزرسانی مستندات API", "تحویل گزارش اسپرینت", "بررسی ظرفیت تیم", "برنامه‌ریزی انتشار نسخه ۱.۲" };
-        var meetingTitles = new[] { "دیلی اسکرام تیم وب", "جلسه برنامه‌ریزی اسپرینت", "بازبینی طراحی رابط کاربری", "جلسه رفع موانع تیم", "مرور نتایج تست QA", "بازبینی کد سرویس احراز هویت", "هماهنگی انتشار نسخه", "جلسه دمو با مشتری", "رتروسپکتیو اسپرینت", "تحلیل شاخص‌های محصول" };
-        var notificationTitles = new[] { "وظیفه جدید به شما واگذار شد", "یک نظر جدید ثبت شد", "اسپرینت فردا به پایان می‌رسد", "درخواست تأیید شما ثبت شد", "فایل جدید در پروژه بارگذاری شد", "مهلت وظیفه نزدیک است", "عضویت شما در پروژه تغییر کرد", "جلسه امروز یادآوری شد", "گزارش هفتگی آماده است", "نسخه جدید Workflow منتشر شد" };
-        var teamNames = new[] { "تیم توسعه وب", "تیم موبایل", "تیم محصول", "تیم طراحی تجربه کاربری", "تیم تضمین کیفیت", "تیم زیرساخت و DevOps", "تیم پشتیبانی مشتریان", "تیم تحلیل داده", "تیم فروش سازمانی", "تیم امنیت" };
-        var roleNames = new[] { "تحلیل‌گر کسب‌وکار", "مالک محصول", "توسعه‌دهنده فرانت‌اند", "توسعه‌دهنده بک‌اند", "مهندس QA", "طراح UI/UX", "مهندس DevOps", "ناظر پروژه", "کارشناس پشتیبانی", "بازبین کد" };
-        var projectNames = new[] { "بهبود تجربه ثبت‌نام", "داشبورد مدیریتی", "اتوماسیون پشتیبانی", "پرتال مشتریان", "یکپارچه‌سازی پیامک", "بهینه‌سازی جستجو", "مهاجرت زیرساخت", "تحلیل رفتار کاربران", "بازطراحی مرکز اعلان", "سامانه گزارش‌گیری" };
-        var projectDescriptions = new[] { "کاهش مراحل ثبت‌نام و افزایش نرخ تکمیل ایجاد حساب کاربری.", "نمایش شاخص‌های کلیدی پروژه و وضعیت تیم برای مدیران سازمان.", "کاهش زمان پاسخ‌گویی با مسیردهی و اولویت‌بندی خودکار درخواست‌ها.", "فراهم‌کردن دسترسی مشتریان به وضعیت سفارش‌ها، فاکتورها و درخواست‌ها.", "ارسال پیامک‌های تراکنشی برای ورود، یادآوری و اطلاع‌رسانی وضعیت.", "بهبود دقت و سرعت جست‌وجو در پروژه‌ها، وظایف و کاربران.", "انتقال سرویس‌ها به زیرساخت پایدار با مانیتورینگ و نسخه‌برداری منظم.", "اندازه‌گیری مسیرهای کاربر برای بهبود قابلیت‌های پرکاربرد محصول.", "یکپارچه‌سازی اعلان‌های درون‌برنامه‌ای، ایمیل و یادآورها.", "ارائه گزارش‌های تصمیم‌ساز برای عملکرد پروژه و ظرفیت تیم." };
-        var meetingDescriptions = new[] { "مرور کارهای دیروز، برنامهٔ امروز و موانع اعضای تیم.", "تخمین کارها، تعیین هدف اسپرینت و نهایی‌کردن ظرفیت تیم.", "بررسی جریان‌های اصلی محصول و تصمیم‌گیری دربارهٔ جزئیات طراحی.", "شناسایی موانع فنی و تعیین مسئول و زمان رفع آن‌ها.", "مرور سناریوهای ناموفق تست و اولویت‌بندی رفع باگ‌ها.", "بازبینی کیفیت پیاده‌سازی، امنیت و پوشش تست تغییرات اخیر.", "بررسی چک‌لیست انتشار و مسئولیت‌های قبل و بعد از Deploy.", "نمایش قابلیت‌های تکمیل‌شده و ثبت بازخورد ذی‌نفعان.", "بررسی موارد قابل بهبود و تعریف اقدام‌های عملی برای اسپرینت بعد.", "تحلیل روند استفاده و شاخص‌های کلیدی عملکرد محصول." };
-
-        var projectCount = await context.Projects.CountAsync();
-        for (var i = projectCount; i < 10; i++)
-        {
-            var item = new Project { Key = $"DEM{i + 1:00}", Name = projectNames[i], Description = projectDescriptions[i], Type = (ProjectType)(i % 3), Privacy = i % 2 == 0 ? ProjectPrivacy.Private : ProjectPrivacy.Public, Icon = "folder", Color = new[] { "#3b82f6", "#22c55e", "#f97316", "#8b5cf6" }[i % 4], StartDate = now.AddDays(-20 + i), EndDate = now.AddDays(35 + i), CreatedBy = "seed-admin" };
-            item.Members.Add(new ProjectMember { UserId = users[i % users.Count], Role = i % 3 == 0 ? "pm" : "member" }); context.Projects.Add(item);
+                plan = new Plan
+                {
+                    Name = definition.Name,
+                    Description = definition.Description,
+                    PriceMonthly = definition.Monthly,
+                    PriceYearly = definition.Yearly,
+                    Users = definition.Users,
+                    Storage = definition.Storage,
+                    FeaturesJson = JsonSerializer.Serialize(definition.Features),
+                    DisplayOrder = definition.Order,
+                    Highlighted = definition.Highlighted,
+                    Active = true,
+                    CreatedBy = SeedTag
+                };
+                db.Plans.Add(plan);
+                await db.SaveChangesAsync();
+            }
+            result[definition.Key] = plan;
         }
-        await context.SaveChangesAsync();
-        var projects = await context.Projects.OrderBy(x => x.Id).Take(10).ToListAsync();
-        var sprintCount = await context.Sprints.CountAsync();
-        for (var i = sprintCount; i < 10; i++) context.Sprints.Add(new Sprint { ProjectId = projects[i % projects.Count].Id, Name = $"اسپرینت انتشار {i + 1}", Goal = "تکمیل و انتشار قابلیت‌های اولویت‌دار محصول.", Status = (SprintStatus)(i % 3), StartDate = now.AddDays(i * 14), EndDate = now.AddDays(i * 14 + 13), CreatedBy = "seed-admin" });
-        await context.SaveChangesAsync();
-        var workCount = await context.WorkItems.CountAsync();
-        for (var i = workCount; i < 10; i++) context.WorkItems.Add(new WorkItem { ProjectId = projects[i % projects.Count].Id, Key = $"{projects[i % projects.Count].Key}-{i + 1}", Title = $"تکمیل قابلیت محصول {i + 1}", Description = "وظیفهٔ نمونه با معیار پذیرش، مسئول و زمان‌بندی مشخص.", Type = (WorkItemType)(i % 4), Status = (WorkItemStatus)(i % 4), Priority = (WorkItemPriority)(i % 4), AssigneeId = users[i % users.Count], ReporterId = "seed-admin", StoryPoints = (i % 8) + 1, DueDate = now.AddDays(i + 3), CreatedBy = "seed-admin", CompletedAt = i % 4 == 3 ? now.AddDays(-i) : null });
-        await context.SaveChangesAsync();
-        var workItems = await context.WorkItems.OrderBy(x => x.Id).Take(10).ToListAsync();
-        for (var i = await context.WorkItemLabels.CountAsync(); i < 10; i++) context.WorkItemLabels.Add(new WorkItemLabel { WorkItemId = workItems[i % workItems.Count].Id, Name = new[] { "backend", "frontend", "qa", "urgent", "design" }[i % 5], Color = "#3b82f6" });
-        for (var i = await context.Set<WorkItemComment>().CountAsync(); i < 10; i++) context.Set<WorkItemComment>().Add(new WorkItemComment { WorkItemId = workItems[i % workItems.Count].Id, AuthorId = users[i % users.Count], Content = "وضعیت بررسی شد؛ اقدام بعدی در برنامهٔ روزانه پیگیری می‌شود.", CreatedBy = users[i % users.Count] });
-        for (var i = await context.WorkItemAttachments.CountAsync(); i < 10; i++) context.WorkItemAttachments.Add(new WorkItemAttachment { WorkItemId = workItems[i % workItems.Count].Id, FileName = $"specification-{i + 1}.pdf", FileUrl = $"/seed-files/specification-{i + 1}.pdf", ContentType = "application/pdf", Size = 125000 + i * 1000, CreatedBy = "seed-admin" });
-
-        var reminders = await context.Reminders.CountAsync();
-        for (var i = reminders; i < 10; i++) context.Reminders.Add(new Reminder { Title = reminderTitles[i], Description = "یادآور عملیاتی برای پیگیری فعالیت‌های پروژه.", ReminderAt = now.AddDays(i + 1).AddHours(9), Priority = (WorkItemPriority)(i % 4), UserId = users[i % users.Count], ProjectId = project.Id, CreatedBy = "seed-admin" });
-        var meetings = await context.Meetings.CountAsync();
-        for (var i = meetings; i < 10; i++) context.Meetings.Add(new Meeting { Title = meetingTitles[i], Description = meetingDescriptions[i], Location = i % 2 == 0 ? "Google Meet" : "اتاق جلسه طبقه دوم", StartsAt = now.Date.AddDays(i).AddHours(9), EndsAt = now.Date.AddDays(i).AddHours(10), OrganizerId = "seed-admin", ProjectId = project.Id, CreatedBy = "seed-admin", Participants = { new MeetingParticipant { UserId = users[i % users.Count] } } });
-        var notifications = await context.UserNotifications.CountAsync();
-        for (var i = notifications; i < 10; i++) context.UserNotifications.Add(new UserNotification { UserId = users[i % users.Count], Title = notificationTitles[i], Body = "برای مشاهدهٔ جزئیات و اقدام لازم، وارد پروژه شوید.", Channel = i % 3 == 0 ? "email" : "in_app", IsRead = i % 3 == 0, CreatedBy = "seed-admin" });
-        foreach (var userId in users) if (!await context.NotificationPreferences.AnyAsync(x => x.UserId == userId)) context.NotificationPreferences.Add(new NotificationPreference { UserId = userId, PreferencesJson = "{\"in_app\":true,\"email\":true,\"push\":false}", CreatedBy = "seed-admin" });
-        var teams = await context.Teams.CountAsync();
-        for (var i = teams; i < 10; i++) { var team = new Team { Name = teamNames[i], Description = "تیم مسئول تحویل بخش‌های کلیدی محصول کارنکس.", LeadId = users[i % users.Count], CreatedBy = "seed-admin" }; foreach (var userId in users.Take(2)) team.Members.Add(new TeamMember { UserId = userId }); context.Teams.Add(team); }
-        var roles = await context.ProjectRoleDefinitions.CountAsync();
-        for (var i = roles; i < 10; i++) context.ProjectRoleDefinitions.Add(new ProjectRoleDefinition { ProjectId = project.Id, Name = roleNames[i], Description = "نقش سفارشی پروژه با سطح دسترسی تعریف‌شده.", PermissionsJson = "[[true,true,false,false,false],[true,true,true,false,false]]", CreatedBy = "seed-admin" });
-        var oldReminders = await context.Reminders.Where(x => x.Title.StartsWith("یادآور نمونه")).OrderBy(x => x.Id).Take(10).ToListAsync(); for (var i = 0; i < oldReminders.Count; i++) oldReminders[i].Title = reminderTitles[i];
-        var oldMeetings = await context.Meetings.Where(x => x.Title.StartsWith("جلسه نمونه") || x.Description == "جلسهٔ هماهنگی و تصمیم‌گیری برای پیشبرد فعالیت‌های پروژه.").OrderBy(x => x.Id).Take(10).ToListAsync(); for (var i = 0; i < oldMeetings.Count; i++) { oldMeetings[i].Title = meetingTitles[i]; oldMeetings[i].Description = meetingDescriptions[i]; }
-        var oldNotifications = await context.UserNotifications.Where(x => x.Title.StartsWith("اعلان نمونه")).OrderBy(x => x.Id).Take(10).ToListAsync(); for (var i = 0; i < oldNotifications.Count; i++) oldNotifications[i].Title = notificationTitles[i];
-        var oldTeams = await context.Teams.Where(x => x.Name.StartsWith("تیم نمونه")).OrderBy(x => x.Id).Take(10).ToListAsync(); for (var i = 0; i < oldTeams.Count; i++) oldTeams[i].Name = teamNames[i];
-        var oldRoles = await context.ProjectRoleDefinitions.Where(x => x.Name.StartsWith("نقش نمونه")).OrderBy(x => x.Id).Take(10).ToListAsync(); for (var i = 0; i < oldRoles.Count; i++) oldRoles[i].Name = roleNames[i];
-        var oldProjects = await context.Projects.Where(x => x.Description == "پروژهٔ نمونه با داده‌های واقع‌گرایانه برای محیط توسعه.").OrderBy(x => x.Id).Take(10).ToListAsync(); for (var i = 0; i < oldProjects.Count; i++) oldProjects[i].Description = projectDescriptions[i];
-        var genericTasks = await context.WorkItems.Where(x => x.Description == "وظیفهٔ نمونه با معیار پذیرش، مسئول و زمان‌بندی مشخص.").ToListAsync(); foreach (var item in genericTasks) item.Description = "پیاده‌سازی قابلیت موردنیاز، ثبت تست‌های لازم و آماده‌سازی برای بازبینی کد.";
-        var genericReminders = await context.Reminders.Where(x => x.Description == "یادآور عملیاتی برای پیگیری فعالیت‌های پروژه.").ToListAsync(); foreach (var item in genericReminders) item.Description = "برای جلوگیری از تأخیر در تحویل، این مورد در جلسهٔ روزانه پیگیری شود.";
-        var genericNotifications = await context.UserNotifications.Where(x => x.Body == "برای مشاهدهٔ جزئیات و اقدام لازم، وارد پروژه شوید.").ToListAsync(); foreach (var item in genericNotifications) item.Body = "این رویداد نیازمند بررسی شماست؛ برای مشاهدهٔ جزئیات به بخش مربوطه مراجعه کنید.";
-        var genericTeams = await context.Teams.Where(x => x.Description == "تیم مسئول تحویل بخش‌های کلیدی محصول کارنکس.").ToListAsync(); foreach (var item in genericTeams) item.Description = "مسئول برنامه‌ریزی، اجرای کارهای اولویت‌دار و تحویل خروجی‌های این حوزه.";
-        var genericRoles = await context.ProjectRoleDefinitions.Where(x => x.Description == "نقش سفارشی پروژه با سطح دسترسی تعریف‌شده.").ToListAsync(); foreach (var item in genericRoles) item.Description = "دسترسی‌های این نقش مطابق مسئولیت فرد در چرخهٔ اجرای پروژه تنظیم شده است.";
-        await context.SaveChangesAsync();
-    }
+        return result;
     }
 
+    private static async Task<Dictionary<string, Project>> SeedProjectsAsync(ApplicationDbContext db, IReadOnlyDictionary<string, User> users)
+    {
+        var definitions = new[]
+        {
+            new ProjectSeed("WEB", "پلتفرم وب کارنکس", "توسعه و بهبود پنل مدیریت پروژه و تجربه کاربری.", ProjectType.Scrum, "#3b82f6"),
+            new ProjectSeed("APP", "اپلیکیشن موبایل", "توسعه نسخه‌های موبایل و اتصال سرویس‌های اصلی.", ProjectType.Kanban, "#f97316"),
+            new ProjectSeed("CRM", "سامانه مدیریت مشتریان", "مدیریت مشتریان، ارتباطات و گزارش‌های فروش.", ProjectType.Basic, "#22c55e")
+        };
+
+        var result = new Dictionary<string, Project>();
+        foreach (var definition in definitions)
+        {
+            var project = await db.Projects.SingleOrDefaultAsync(x => x.Key == definition.Key);
+            if (project is null)
+            {
+                project = new Project
+                {
+                    Key = definition.Key,
+                    Name = definition.Name,
+                    Description = definition.Description,
+                    Type = definition.Type,
+                    Status = ProjectStatus.Active,
+                    Privacy = ProjectPrivacy.Private,
+                    Icon = definition.Key == "APP" ? "smartphone" : definition.Key == "CRM" ? "users" : "globe",
+                    Color = definition.Color,
+                    StartDate = DateTime.UtcNow.Date.AddDays(-14),
+                    EndDate = DateTime.UtcNow.Date.AddDays(90),
+                    CreatedBy = users[AdminId].Id
+                };
+                db.Projects.Add(project);
+                await db.SaveChangesAsync();
+            }
+
+            var memberships = definition.Key == "WEB"
+                ? new[] { (users[AdminId], "pm"), (users[DeveloperId], "member"), (users[DesignerId], "member"), (users[QaId], "member") }
+                : definition.Key == "APP"
+                    ? new[] { (users[AdminId], "pm"), (users[DeveloperId], "member"), (users[QaId], "member") }
+                    : new[] { (users[AdminId], "pm"), (users[DesignerId], "member") };
+
+            foreach (var (user, role) in memberships)
+            {
+                if (!await db.ProjectMembers.AnyAsync(x => x.ProjectId == project.Id && x.UserId == user.Id))
+                    db.ProjectMembers.Add(new ProjectMember { ProjectId = project.Id, UserId = user.Id, Role = role });
+            }
+            await db.SaveChangesAsync();
+            result[definition.Key] = project;
+        }
+        return result;
+    }
+
+    private static async Task<Dictionary<string, Sprint>> SeedSprintsAsync(ApplicationDbContext db, IReadOnlyDictionary<string, Project> projects)
+    {
+        var result = new Dictionary<string, Sprint>();
+        foreach (var (key, project) in projects)
+        {
+            var sprintName = $"{key} - اسپرینت اول";
+            var sprint = await db.Sprints.SingleOrDefaultAsync(x => x.ProjectId == project.Id && x.Name == sprintName);
+            if (sprint is null)
+            {
+                var now = DateTime.UtcNow.Date;
+                sprint = new Sprint
+                {
+                    ProjectId = project.Id,
+                    Name = sprintName,
+                    Goal = "تحویل قابلیت‌های اولویت‌دار با کیفیت قابل انتشار.",
+                    Status = key == "WEB" ? SprintStatus.Active : SprintStatus.Planned,
+                    StartDate = now.AddDays(-3),
+                    EndDate = now.AddDays(11),
+                    CreatedBy = AdminId
+                };
+                db.Sprints.Add(sprint);
+                await db.SaveChangesAsync();
+            }
+            result[key] = sprint;
+        }
+        return result;
+    }
+
+    private static async Task<Dictionary<string, WorkItem>> SeedWorkItemsAsync(
+        ApplicationDbContext db,
+        IReadOnlyDictionary<string, Project> projects,
+        IReadOnlyDictionary<string, Sprint> sprints,
+        IReadOnlyDictionary<string, User> users)
+    {
+        var definitions = new[]
+        {
+            new WorkSeed("WEB", "WEB-1", "تکمیل احراز هویت", WorkItemType.Epic, WorkItemStatus.InProgress, WorkItemPriority.High, DeveloperId, 13),
+            new WorkSeed("WEB", "WEB-2", "اتصال فرم ورود به API", WorkItemType.Task, WorkItemStatus.InProgress, WorkItemPriority.Highest, DeveloperId, 5),
+            new WorkSeed("WEB", "WEB-3", "طراحی صفحه ثبت‌نام", WorkItemType.Story, WorkItemStatus.Done, WorkItemPriority.Medium, DesignerId, 3),
+            new WorkSeed("WEB", "WEB-4", "تست سناریوهای احراز هویت", WorkItemType.Bug, WorkItemStatus.Todo, WorkItemPriority.High, QaId, 3),
+            new WorkSeed("APP", "APP-1", "اتصال اپلیکیشن به API", WorkItemType.Story, WorkItemStatus.InProgress, WorkItemPriority.High, DeveloperId, 8),
+            new WorkSeed("APP", "APP-2", "تست واحد سفارش‌ها", WorkItemType.Task, WorkItemStatus.Todo, WorkItemPriority.Medium, QaId, 5),
+            new WorkSeed("CRM", "CRM-1", "طراحی فرم ثبت مشتری", WorkItemType.Task, WorkItemStatus.Done, WorkItemPriority.Medium, DesignerId, 5),
+            new WorkSeed("CRM", "CRM-2", "ساخت API مخاطبین", WorkItemType.Task, WorkItemStatus.Review, WorkItemPriority.High, DeveloperId, 8)
+        };
+
+        var result = new Dictionary<string, WorkItem>();
+        foreach (var definition in definitions)
+        {
+            var project = projects[definition.ProjectKey];
+            var item = await db.WorkItems.SingleOrDefaultAsync(x => x.ProjectId == project.Id && x.Key == definition.Key);
+            if (item is null)
+            {
+                item = new WorkItem
+                {
+                    ProjectId = project.Id,
+                    SprintId = definition.ProjectKey == "CRM" ? null : sprints[definition.ProjectKey].Id,
+                    Key = definition.Key,
+                    Title = definition.Title,
+                    Description = "شرح وظیفه، معیار پذیرش و مراحل انجام در این بخش ثبت می‌شود.",
+                    Type = definition.Type,
+                    Status = definition.Status,
+                    Priority = definition.Priority,
+                    AssigneeId = users[definition.AssigneeKey].Id,
+                    ReporterId = users[AdminId].Id,
+                    StoryPoints = definition.Points,
+                    DueDate = DateTime.UtcNow.Date.AddDays(7),
+                    CompletedAt = definition.Status == WorkItemStatus.Done ? DateTime.UtcNow : null,
+                    CreatedBy = users[AdminId].Id
+                };
+                db.WorkItems.Add(item);
+                await db.SaveChangesAsync();
+            }
+            result[definition.Key] = item;
+        }
+        return result;
+    }
+
+    private static async Task SeedWorkItemChildrenAsync(ApplicationDbContext db, IReadOnlyDictionary<string, WorkItem> items, IReadOnlyDictionary<string, User> users)
+    {
+        foreach (var (key, item) in items)
+        {
+            if (!await db.WorkItemLabels.AnyAsync(x => x.WorkItemId == item.Id))
+            {
+                db.WorkItemLabels.AddRange(
+                    new WorkItemLabel { WorkItemId = item.Id, Name = "backend", Color = "#3b82f6" },
+                    new WorkItemLabel { WorkItemId = item.Id, Name = "development", Color = "#8b5cf6" });
+            }
+            if (!await db.WorkItemComments.AnyAsync(x => x.WorkItemId == item.Id))
+                db.WorkItemComments.Add(new WorkItemComment
+                {
+                    WorkItemId = item.Id,
+                    AuthorId = users[AdminId].Id,
+                    Content = $"وضعیت {key} بررسی شد؛ نتیجه در بازبینی بعدی پیگیری می‌شود.",
+                    CreatedBy = users[AdminId].Id
+                });
+            if (!await db.WorkItemAttachments.AnyAsync(x => x.WorkItemId == item.Id))
+                db.WorkItemAttachments.Add(new WorkItemAttachment
+                {
+                    WorkItemId = item.Id,
+                    FileName = $"{key.ToLowerInvariant()}-specification.pdf",
+                    FileUrl = $"/seed-files/{key.ToLowerInvariant()}-specification.pdf",
+                    ContentType = "application/pdf",
+                    Size = 128000,
+                    CreatedBy = users[AdminId].Id
+                });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedTeamsAsync(ApplicationDbContext db, IReadOnlyDictionary<string, User> users)
+    {
+        var definitions = new[]
+        {
+            ("تیم توسعه وب", "توسعه و نگهداری سرویس‌های وب.", DeveloperId, new[] { AdminId, DeveloperId, QaId }),
+            ("تیم محصول و طراحی", "تحلیل نیازمندی‌ها و طراحی تجربه کاربری.", DesignerId, new[] { AdminId, DesignerId }),
+            ("تیم تضمین کیفیت", "تست، کنترل کیفیت و بررسی انتشار.", QaId, new[] { AdminId, QaId, DeveloperId })
+        };
+        foreach (var definition in definitions)
+        {
+            var team = await db.Teams.SingleOrDefaultAsync(x => x.Name == definition.Item1);
+            if (team is null)
+            {
+                team = new Team { Name = definition.Item1, Description = definition.Item2, LeadId = users[definition.Item3].Id, CreatedBy = users[AdminId].Id };
+                db.Teams.Add(team);
+                await db.SaveChangesAsync();
+            }
+            foreach (var memberKey in definition.Item4)
+                if (!await db.TeamMembers.AnyAsync(x => x.TeamId == team.Id && x.UserId == users[memberKey].Id))
+                    db.TeamMembers.Add(new TeamMember { TeamId = team.Id, UserId = users[memberKey].Id });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedProjectRolesAsync(ApplicationDbContext db, IReadOnlyDictionary<string, Project> projects)
+    {
+        var definitions = new[]
+        {
+            ("مالک محصول", "مدیریت اولویت‌ها و معیار پذیرش.", "[[true,true,true,false,true]]"),
+            ("توسعه‌دهنده", "اجرای وظایف فنی و ثبت تغییرات.", "[[true,true,false,false,false]]"),
+            ("ناظر", "مشاهده وضعیت و گزارش‌های پروژه.", "[[true,false,false,false,false]]")
+        };
+        foreach (var project in projects.Values)
+        foreach (var definition in definitions)
+        {
+            if (!await db.ProjectRoleDefinitions.AnyAsync(x => x.ProjectId == project.Id && x.Name == definition.Item1))
+                db.ProjectRoleDefinitions.Add(new ProjectRoleDefinition
+                {
+                    ProjectId = project.Id,
+                    Name = definition.Item1,
+                    Description = definition.Item2,
+                    PermissionsJson = definition.Item3,
+                    CreatedBy = AdminId
+                });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<int> SeedWorkflowAsync(ApplicationDbContext db)
+    {
+        const string workflowName = "Karnex Default Workflow";
+        var workflow = await db.WorkflowDefinitions.SingleOrDefaultAsync(x => x.Name == workflowName && x.IsSystem);
+        if (workflow is null)
+        {
+            workflow = new WorkflowDefinitionRecord
+            {
+                Name = workflowName,
+                Description = "گردش‌کار پیش‌فرض کارنکس برای محیط توسعه.",
+                IsSystem = true,
+                IsDraft = false,
+                Version = 1,
+                PayloadJson = JsonSerializer.Serialize(new
+                {
+                    states = new[]
+                    {
+                        new { id = "todo", name = "To do", category = "todo" },
+                        new { id = "in-progress", name = "In progress", category = "inprogress" },
+                        new { id = "review", name = "Review", category = "review" },
+                        new { id = "done", name = "Done", category = "done" }
+                    },
+                    transitions = new[]
+                    {
+                        new { from = "todo", to = "in-progress" },
+                        new { from = "in-progress", to = "review" },
+                        new { from = "review", to = "done" },
+                        new { from = "review", to = "in-progress" }
+                    }
+                }),
+                CreatedBy = AdminId
+            };
+            db.WorkflowDefinitions.Add(workflow);
+            await db.SaveChangesAsync();
+        }
+        return workflow.Id;
+    }
+
+    private static async Task SeedBoardSettingsAsync(ApplicationDbContext db, IReadOnlyDictionary<string, Project> projects, int workflowId)
+    {
+        var columns = JsonSerializer.Serialize(new[]
+        {
+            new { id = "todo", title = "To do", order = 0 },
+            new { id = "in-progress", title = "In progress", order = 1 },
+            new { id = "review", title = "Review", order = 2 },
+            new { id = "done", title = "Done", order = 3 }
+        });
+        foreach (var project in projects.Values)
+        {
+            var setting = await db.ProjectWorkflowBoardSettings.SingleOrDefaultAsync(x => x.ProjectId == project.Id);
+            if (setting is null)
+                db.ProjectWorkflowBoardSettings.Add(new ProjectWorkflowBoardSetting
+                {
+                    ProjectId = project.Id,
+                    WorkflowDefinitionRecordId = workflowId,
+                    KanbanBacklogEnabled = true,
+                    BoardColumnsJson = columns,
+                    CreatedBy = AdminId
+                });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedMeetingsAsync(ApplicationDbContext db, IReadOnlyDictionary<string, Project> projects, IReadOnlyDictionary<string, User> users)
+    {
+        foreach (var (key, project) in projects)
+        {
+            var title = $"{key} - جلسه برنامه‌ریزی";
+            var meeting = await db.Meetings.SingleOrDefaultAsync(x => x.ProjectId == project.Id && x.Title == title);
+            if (meeting is null)
+            {
+                var start = DateTime.UtcNow.Date.AddDays(1).AddHours(9);
+                meeting = new Meeting
+                {
+                    ProjectId = project.Id,
+                    OrganizerId = users[AdminId].Id,
+                    Title = title,
+                    Description = "مرور پیشرفت، موانع و برنامه اقدام اعضای تیم.",
+                    Location = "اتاق جلسه آنلاین",
+                    MeetingUrl = "https://meet.google.com/",
+                    StartsAt = start,
+                    EndsAt = start.AddHours(1),
+                    Status = MeetingStatus.Scheduled,
+                    CreatedBy = users[AdminId].Id
+                };
+                db.Meetings.Add(meeting);
+                await db.SaveChangesAsync();
+            }
+            foreach (var userKey in new[] { AdminId, DeveloperId })
+                if (!await db.MeetingParticipants.AnyAsync(x => x.MeetingId == meeting.Id && x.UserId == users[userKey].Id))
+                    db.MeetingParticipants.Add(new MeetingParticipant { MeetingId = meeting.Id, UserId = users[userKey].Id, HasAccepted = userKey == AdminId });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedRemindersAsync(ApplicationDbContext db, IReadOnlyDictionary<string, Project> projects, IReadOnlyDictionary<string, WorkItem> items, IReadOnlyDictionary<string, User> users)
+    {
+        var definitions = new[]
+        {
+            ("یادآوری بررسی وظایف", "WEB", "WEB-2", AdminId, WorkItemPriority.High),
+            ("یادآوری تست نسخه", "APP", "APP-2", QaId, WorkItemPriority.Medium),
+            ("یادآوری بازبینی مشتری", "CRM", "CRM-2", DesignerId, WorkItemPriority.Low)
+        };
+        foreach (var definition in definitions)
+        {
+            var title = $"{definition.Item2} - {definition.Item1}";
+            if (!await db.Reminders.AnyAsync(x => x.Title == title && x.UserId == users[definition.Item4].Id))
+                db.Reminders.Add(new Reminder
+                {
+                    Title = title,
+                    Description = "این مورد را در جلسه روزانه بررسی و نتیجه را ثبت کنید.",
+                    ReminderAt = DateTime.UtcNow.AddDays(1),
+                    Priority = definition.Item5,
+                    UserId = users[definition.Item4].Id,
+                    ProjectId = projects[definition.Item2].Id,
+                    WorkItemId = items[definition.Item3].Id,
+                    CreatedBy = users[AdminId].Id
+                });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedNotificationsAsync(ApplicationDbContext db, IReadOnlyDictionary<string, User> users)
+    {
+        var notifications = new[]
+        {
+            (AdminId, "به‌روزرسانی پروژه", "پروژه وب به‌روزرسانی شد.", "in_app"),
+            (DeveloperId, "وظیفه جدید", "وظیفه اتصال فرم ورود به شما واگذار شد.", "in_app"),
+            (DesignerId, "بازبینی طراحی", "طرح صفحه ثبت‌نام آماده بازبینی است.", "email"),
+            (QaId, "درخواست تست", "نسخه جدید برای تست آماده است.", "in_app")
+        };
+        foreach (var definition in notifications)
+        {
+            var userId = users[definition.Item1].Id;
+            if (!await db.UserNotifications.AnyAsync(x => x.UserId == userId && x.Title == definition.Item2))
+                db.UserNotifications.Add(new UserNotification
+                {
+                    UserId = userId,
+                    Title = definition.Item2,
+                    Body = definition.Item3,
+                    Channel = definition.Item4,
+                    IsRead = false,
+                    CreatedBy = users[AdminId].Id
+                });
+            if (!await db.NotificationPreferences.AnyAsync(x => x.UserId == userId))
+                db.NotificationPreferences.Add(new NotificationPreference
+                {
+                    UserId = userId,
+                    PreferencesJson = JsonSerializer.Serialize(new { in_app = true, email = true, push = false }),
+                    CreatedBy = users[AdminId].Id
+                });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedSubscriptionsAsync(ApplicationDbContext db, IReadOnlyDictionary<string, Plan> plans, IReadOnlyDictionary<string, User> users)
+    {
+        var assignments = new[]
+        {
+            (AdminId, "business"),
+            (DeveloperId, "pro"),
+            (DesignerId, "free"),
+            (QaId, "free")
+        };
+        foreach (var (userKey, planKey) in assignments)
+        {
+            var userId = users[userKey].Id;
+            if (!await db.UserSubscriptions.AnyAsync(x => x.UserId == userId))
+                db.UserSubscriptions.Add(new UserSubscription
+                {
+                    UserId = userId,
+                    PlanId = plans[planKey].Id,
+                    Status = "active",
+                    PeriodStart = DateTime.UtcNow.Date,
+                    PeriodEnd = DateTime.UtcNow.Date.AddMonths(1),
+                    CancelAtPeriodEnd = false,
+                    CreatedBy = users[AdminId].Id
+                });
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private sealed record SeedUser(string Key, string DisplayName, string Phone, string Email, string Role);
+    private sealed record PlanSeed(string Key, string Name, string Description, decimal Monthly, decimal Yearly, int Users, string Storage, string[] Features, int Order, bool Highlighted);
+    private sealed record ProjectSeed(string Key, string Name, string Description, ProjectType Type, string Color);
+    private sealed record WorkSeed(string ProjectKey, string Key, string Title, WorkItemType Type, WorkItemStatus Status, WorkItemPriority Priority, string AssigneeKey, int Points);
+}
