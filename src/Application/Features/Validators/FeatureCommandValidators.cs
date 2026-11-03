@@ -115,8 +115,14 @@ public sealed class UpdatePlanCommandValidator : AbstractValidator<UpdatePlanCom
 {
     public UpdatePlanCommandValidator()
     {
-        Include(new CreatePlanCommandValidator());
         RuleFor(x => x.Id).GreaterThan(0);
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Description).MaximumLength(1000);
+        RuleFor(x => x.PriceMonthly).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.PriceYearly).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.Users).GreaterThanOrEqualTo(-1);
+        RuleFor(x => x.Storage).NotEmpty().MaximumLength(50);
+        RuleForEach(x => x.Features!).NotEmpty().MaximumLength(120).When(x => x.Features is not null);
     }
 }
 
